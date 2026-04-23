@@ -1,0 +1,47 @@
+{
+  "_readme": "In the Bedrock console: Agent builder → Action groups → Add → 'Define with function details'. Use the JSON editor to paste each function block below ONE AT A TIME. Do not paste this whole file.",
+
+  "_actionGroup": {
+    "name": "JobManagement",
+    "description": "Manages job cards and tradie assignment for Tradie Connect inbound calls.",
+    "executor": "Select your Lambda function: tradie-agent-actions-dev"
+  },
+
+  "functions": [
+    {
+      "name": "createJobCard",
+      "description": "Creates a new job card in DynamoDB with customer and job details. Always call this first.",
+      "parameters": [
+        { "name": "customerName",       "type": "string", "required": "True", "description": "Full name of the customer calling in." },
+        { "name": "callbackNumber",     "type": "string", "required": "True", "description": "Customer phone number for callback." },
+        { "name": "serviceType",        "type": "string", "required": "True", "description": "Type of trade required e.g. plumber, electrician, carpenter." },
+        { "name": "address",            "type": "string", "required": "True", "description": "Full street address including suburb, state and postcode." },
+        { "name": "problemDescription", "type": "string", "required": "True", "description": "Description of the problem, preferred time, and urgency e.g. Leaking tap, tomorrow morning, standard." }
+      ]
+    },
+    {
+      "name": "lookupAvailableTradie",
+      "description": "Finds an available tradie matching the service type and suburb. Call this after createJobCard.",
+      "parameters": [
+        { "name": "serviceType", "type": "string", "required": "True",  "description": "Trade type to match, must match what was passed to createJobCard." },
+        { "name": "suburb",      "type": "string", "required": "False", "description": "Suburb from the customer address, used to prefer a nearby tradie." }
+      ]
+    },
+    {
+      "name": "assignTradieToJob",
+      "description": "Assigns the matched tradie to the job card. Call this after lookupAvailableTradie.",
+      "parameters": [
+        { "name": "jobId",    "type": "string", "required": "True", "description": "Job ID returned by createJobCard." },
+        { "name": "tradieId", "type": "string", "required": "True", "description": "Tradie ID returned by lookupAvailableTradie." }
+      ]
+    },
+    {
+      "name": "logJobNotification",
+      "description": "Logs the notification intent for the assigned tradie. Call this last, after assignTradieToJob.",
+      "parameters": [
+        { "name": "jobId",       "type": "string", "required": "True", "description": "Job ID of the assigned job." },
+        { "name": "tradiePhone", "type": "string", "required": "True", "description": "Phone number of the assigned tradie." }
+      ]
+    }
+  ]
+}

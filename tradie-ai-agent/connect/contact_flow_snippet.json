@@ -1,0 +1,33 @@
+{
+  "_readme": "This is a REFERENCE document — do not import it. The Connect flow import format is proprietary and changes between releases. Build the flow manually in the Connect flow designer using the block settings below.",
+
+  "_blocks_to_add_in_order": [
+    {
+      "step": 1,
+      "block": "Set voice",
+      "purpose": "Optional — set language and voice (e.g. Australian English, Olivia)",
+      "settings": {
+        "Language": "en-AU",
+        "Voice": "Olivia (Neural)"
+      }
+    },
+    {
+      "step": 2,
+      "block": "Amazon Bedrock agent",
+      "purpose": "Hands the call to the Bedrock Agent for the full conversation",
+      "settings": {
+        "Agent ID":       "REPLACE_WITH_AGENT_ID      (from Bedrock → Agents → your agent overview page)",
+        "Agent alias ID": "REPLACE_WITH_AGENT_ALIAS_ID (from Bedrock → Agents → your agent → Aliases tab)"
+      },
+      "on_success":     "→ connect to Disconnect block",
+      "on_error":       "→ connect to Disconnect block"
+    },
+    {
+      "step": 3,
+      "block": "Disconnect",
+      "purpose": "Ends the call after the agent finishes"
+    }
+  ],
+
+  "_flow_structure": "Entry → (Set voice) → Amazon Bedrock agent → Disconnect"
+}

@@ -1,0 +1,103 @@
+{
+  "Version": "2019-10-30",
+  "StartAction": "a1b2c3d4-0001-0001-0001-000000000001",
+  "Metadata": {
+    "entryPointPosition": { "x": 20.0, "y": 20.0 },
+    "ActionMetadata": {
+      "a1b2c3d4-0001-0001-0001-000000000001": { "position": { "x": 68.0,  "y": 115.0 } },
+      "a1b2c3d4-0001-0001-0001-000000000002": { "position": { "x": 300.0, "y": 115.0 } },
+      "a1b2c3d4-0001-0001-0001-000000000003": { "position": { "x": 560.0, "y": 115.0 } },
+      "a1b2c3d4-0001-0001-0001-000000000004": { "position": { "x": 560.0, "y": 320.0 } },
+      "a1b2c3d4-0001-0001-0001-000000000005": { "position": { "x": 820.0, "y": 200.0 } }
+    },
+    "Annotations": [],
+    "name": "POC_Inbound_Tradie",
+    "description": "Tradie Connect inbound voice flow — Lex V2 bot integration",
+    "type": "contactFlow",
+    "status": "saved"
+  },
+  "Actions": [
+    {
+      "Identifier": "a1b2c3d4-0001-0001-0001-000000000001",
+      "Type": "UpdateFlowLoggingBehavior",
+      "Parameters": {
+        "FlowLoggingBehavior": "Enabled"
+      },
+      "Transitions": {
+        "NextAction": "a1b2c3d4-0001-0001-0001-000000000002",
+        "Errors": [],
+        "Conditions": []
+      }
+    },
+    {
+      "Identifier": "a1b2c3d4-0001-0001-0001-000000000002",
+      "Type": "UpdateContactTextToSpeechVoice",
+      "Parameters": {
+        "TextToSpeechEngine": "Neural",
+        "TextToSpeechStyle": "None",
+        "TextToSpeechVoice": "Olivia"
+      },
+      "Transitions": {
+        "NextAction": "a1b2c3d4-0001-0001-0001-000000000003",
+        "Errors": [],
+        "Conditions": []
+      }
+    },
+    {
+      "Identifier": "a1b2c3d4-0001-0001-0001-000000000003",
+      "Type": "GetParticipantInput",
+      "Parameters": {
+        "LexV2Bot": {
+          "AliasArn": "arn:aws:lex:ap-southeast-2:961178969093:bot-alias/8Q4RROSCP2/RXQU1942HA"
+        },
+        "Text": "welcome",
+        "TextToSpeechType": "text",
+        "Timeout": "3000",
+        "MaxSpeechDuration": "12000",
+        "LexSessionAttributes": {}
+      },
+      "Transitions": {
+        "NextAction": "a1b2c3d4-0001-0001-0001-000000000005",
+        "Errors": [
+          {
+            "NextAction": "a1b2c3d4-0001-0001-0001-000000000004",
+            "ErrorType": "NoMatchingError"
+          }
+        ],
+        "Conditions": [
+          {
+            "NextAction": "a1b2c3d4-0001-0001-0001-000000000005",
+            "Condition": {
+              "Operator": "Equals",
+              "Operands": ["Fulfilled"]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "Identifier": "a1b2c3d4-0001-0001-0001-000000000004",
+      "Type": "MessageParticipant",
+      "Parameters": {
+        "Text": "Sorry, something went wrong on our end. Please call back and we'll get you sorted. Goodbye.",
+        "TextToSpeechType": "text"
+      },
+      "Transitions": {
+        "NextAction": "a1b2c3d4-0001-0001-0001-000000000005",
+        "Errors": [
+          {
+            "NextAction": "a1b2c3d4-0001-0001-0001-000000000005",
+            "ErrorType": "NoMatchingError"
+          }
+        ],
+        "Conditions": []
+      }
+    },
+    {
+      "Identifier": "a1b2c3d4-0001-0001-0001-000000000005",
+      "Type": "DisconnectParticipant",
+      "Parameters": {},
+      "Transitions": {}
+    }
+  ]
+}

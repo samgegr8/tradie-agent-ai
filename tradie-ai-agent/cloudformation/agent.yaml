@@ -1,0 +1,283 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Tradie Connect — AI Agent Infrastructure
+  Adds: JobsTable, agent action Lambda, IAM role,
+  and the Connect Agent action group definition.
+  Note: SMS notification (Twilio) is a future roadmap item — no SNS resources here.
+
+Parameters:
+  Env:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+
+  CodeBucket:
+    Type: String
+    Description: S3 bucket containing Lambda zip files
+
+  ConnectInstanceArn:
+    Type: String
+    Description: Full ARN of the Amazon Connect instance
+
+  BedrockAgentId:
+    Type: String
+    Default: ""
+    Description: Bedrock Agent ID — leave blank on first deploy, populate after creating the agent
+
+  BedrockAgentAliasId:
+    Type: String
+    Default: ""
+    Description: Bedrock Agent Alias ID — leave blank on first deploy, populate after creating the alias
+
+# ── Conditions ─────────────────────────────────────────────────────────────────
+Conditions:
+  IsProd: !Equals [!Ref Env, prod]
+
+# ── Resources ──────────────────────────────────────────────────────────────────
+Resources:
+
+  # ── 1. JobsTable ─────────────────────────────────────────────────────────────
+  JobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "JobsTable-${Env}"
+      BillingMode: PAY_PER_REQUEST
+      TableClass: !If [IsProd, STANDARD, STANDARD_INFREQUENT_ACCESS]
+
+      AttributeDefinitions:
+        - AttributeName: job_id
+          AttributeType: S
+        - AttributeName: created_at
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+
+      KeySchema:
+        - AttributeName: job_id
+          KeyType: HASH
+
+      GlobalSecondaryIndexes:
+        # Query by status (e.g. all PENDING_ASSIGNMENT jobs)
+        - IndexName: StatusIndex
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: created_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+      # 30-day TTL (consistent with recordings / transcriptions)
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProd, true, false]
+
+      SSESpecification:
+        SSEEnabled: true
+
+      Tags:
+        - Key: Project
+          Value: TradieConnect
+        - Key: Env
+          Value: !Ref Env
+
+  # ── 2. Lambda execution role ──────────────────────────────────────────────────
+  AgentActionLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "tradie-agent-action-role-${Env}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+      Policies:
+        - PolicyName: AgentActionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+
+              # DynamoDB — JobsTable (read + write)
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt JobsTable.Arn
+                  - !Sub "${JobsTable.Arn}/index/*"
+
+              # DynamoDB — TradiesTable (read only)
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/TradiesTable-${Env}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/TradiesTable-${Env}/index/*"
+                  # Note: SNS permissions intentionally omitted.
+                  # Twilio SMS integration is a future roadmap item.
+
+  # ── 3. Agent action Lambda ────────────────────────────────────────────────────
+  AgentActionLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "tradie-agent-actions-${Env}"
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !GetAtt AgentActionLambdaRole.Arn
+      Timeout: 30
+      MemorySize: 256
+
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: lambda/agent_actions.zip
+
+      Environment:
+        Variables:
+          JOBS_TABLE:    !Ref JobsTable
+          TRADIES_TABLE: !Sub "TradiesTable-${Env}"
+          ENV:           !Ref Env
+
+      Tags:
+        - Key: Project
+          Value: TradieConnect
+        - Key: Env
+          Value: !Ref Env
+
+  # ── 4. Bedrock Agent execution role ──────────────────────────────────────
+  BedrockAgentExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "tradie-bedrock-agent-role-${Env}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: BedrockAgentExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Invoke Claude via foundation models and inference profiles
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:GetInferenceProfile
+                  - bedrock:ListInferenceProfiles
+                Resource: "*"
+              # Invoke the action group Lambda
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !GetAtt AgentActionLambda.Arn
+
+  # ── 5. Allow Amazon Bedrock Agents to invoke the action Lambda ───────────
+  AgentActionLambdaBedrockPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt AgentActionLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  # ── 6. Lex fulfillment Lambda role ────────────────────────────────────────
+  LexFulfillmentLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "tradie-lex-fulfillment-role-${Env}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: LexFulfillmentPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeAgent
+                Resource: !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${BedrockAgentId}/${BedrockAgentAliasId}"
+
+  # ── 6. Lex fulfillment Lambda ─────────────────────────────────────────────
+  LexFulfillmentLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "tradie-lex-fulfillment-${Env}"
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !GetAtt LexFulfillmentLambdaRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: lambda/lex_fulfillment.zip
+      Environment:
+        Variables:
+          BEDROCK_AGENT_ID:       !Ref BedrockAgentId
+          BEDROCK_AGENT_ALIAS_ID: !Ref BedrockAgentAliasId
+      Tags:
+        - Key: Project
+          Value: TradieConnect
+        - Key: Env
+          Value: !Ref Env
+
+  # ── 7. Allow Lex to invoke the fulfillment Lambda ─────────────────────────
+  LexFulfillmentLambdaLexPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt LexFulfillmentLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: lexv2.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+# ── Outputs ────────────────────────────────────────────────────────────────────
+Outputs:
+
+  JobsTableName:
+    Value: !Ref JobsTable
+    Export:
+      Name: !Sub "TradieConnect-JobsTable-${Env}"
+
+  BedrockAgentExecutionRoleArn:
+    Value: !GetAtt BedrockAgentExecutionRole.Arn
+    Description: Assign this role to the Bedrock Agent in the console (Bedrock → Agent → Edit → Agent resource role)
+    Export:
+      Name: !Sub "TradieConnect-BedrockAgentRole-${Env}"
+
+  AgentActionLambdaArn:
+    Value: !GetAtt AgentActionLambda.Arn
+    Description: Paste this ARN into the Bedrock Agent action group Lambda field
+    Export:
+      Name: !Sub "TradieConnect-AgentActionLambda-${Env}"
+
+  LexFulfillmentLambdaArn:
+    Value: !GetAtt LexFulfillmentLambda.Arn
+    Description: Paste this ARN into the Lex V2 bot FallbackIntent fulfillment field
+    Export:
+      Name: !Sub "TradieConnect-LexFulfillmentLambda-${Env}"
