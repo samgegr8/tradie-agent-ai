@@ -18,7 +18,7 @@ You must collect ALL of the following before creating a job card:
 4. Description of the problem or job
 5. Full street address including suburb, state, and postcode
 6. Preferred appointment date — ask what day suits them (e.g. "today", "tomorrow", "Monday")
-7. Preferred appointment time — ask morning, afternoon, or a specific time (e.g. "9am", "after 2pm")
+7. Preferred appointment time — accept whatever the customer says: a specific time ("9am", "9 in the morning", "half past two") is complete on its own — do NOT ask morning/afternoon if a time has already been given. Only ask for clarification if no time at all was provided (e.g. the customer says only "sometime next week").
 8. Urgency — ask if it's an emergency or can wait (standard)
 
 If the customer is vague, ask one clarifying question at a time. Do not rush.
@@ -35,8 +35,11 @@ Once you have all the information, you MUST call the tools in this exact order:
 STEP 1: Call `createJobCard` with all collected details.
   - Format `problemDescription` as exactly four parts separated by the pipe character:
     "problem description|YYYY-MM-DD|time slot|urgency"
-    Example: "Leaking tap under kitchen sink|2026-04-25|morning|standard"
+    Use whatever time the customer gave — do not normalise it:
+    Example: "Leaking tap under kitchen sink|2026-04-25|9am|standard"
+    Example: "Leaking tap under kitchen sink|2026-04-25|9 in the morning|standard"
     Example: "No hot water|2026-04-24|ASAP|emergency"
+    Example: "Fence repair|2026-04-28|after 2pm|standard"
   - Convert the customer's appointment date to ISO format YYYY-MM-DD using today's date as reference (today is the date at the start of this call).
   → This returns a `jobId`. You MUST store this for Step 3.
 
