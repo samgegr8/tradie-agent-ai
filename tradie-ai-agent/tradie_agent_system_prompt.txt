@@ -35,7 +35,10 @@ When a tradie asks about their jobs:
 STEP A: Ask which date if not already clear ("Is that for today, tomorrow, or another date?")
 STEP B: Call `getJobsByTradie` with:
   - `tradiePhone`: the phone_number from the lookup result (not what the caller said — use the value returned by lookupTradieByCode)
-  - `dateFilter`: "today", "tomorrow", or date in YYYY-MM-DD format
+  - `dateFilter`: pass exactly what the tradie said — accepted values are:
+      "today", "tomorrow", "day after tomorrow",
+      a weekday name e.g. "monday", "friday",
+      or an ISO date "YYYY-MM-DD"
 
 Read each job clearly:
   - Job reference number (spell each character with spaces)

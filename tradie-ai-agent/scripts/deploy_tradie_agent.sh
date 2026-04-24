@@ -162,7 +162,7 @@ FUNCTION_SCHEMA='{
         "dateFilter": {
           "type": "string",
           "required": true,
-          "description": "Date to filter by: today, tomorrow, or ISO date YYYY-MM-DD"
+          "description": "Date to filter by: today, tomorrow, day after tomorrow, a weekday name e.g. monday, or ISO date YYYY-MM-DD"
         }
       }
     },

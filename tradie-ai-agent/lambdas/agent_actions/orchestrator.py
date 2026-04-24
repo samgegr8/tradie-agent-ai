@@ -246,16 +246,27 @@ class MCPOrchestrator:
         """
         from datetime import timedelta
 
-        today = datetime.now(timezone.utc).date()
+        today  = datetime.now(timezone.utc).date()
+        phrase = date_filter.strip().lower()
 
-        if date_filter.lower() == "today":
+        WEEKDAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]
+
+        if phrase in ("today", "this day"):
             target_date = today
-        elif date_filter.lower() == "tomorrow":
+        elif phrase == "tomorrow":
             target_date = today + timedelta(days=1)
+        elif phrase in ("day after tomorrow", "the day after tomorrow", "overmorrow"):
+            target_date = today + timedelta(days=2)
+        elif phrase in WEEKDAYS:
+            # next occurrence of the named weekday (could be today if it matches)
+            target_dow  = WEEKDAYS.index(phrase)
+            days_ahead  = (target_dow - today.weekday()) % 7 or 7
+            target_date = today + timedelta(days=days_ahead)
         else:
             try:
                 target_date = datetime.strptime(date_filter[:10], "%Y-%m-%d").date()
             except ValueError:
+                logger.warning("get_jobs_by_tradie: unrecognised date_filter '%s', defaulting to today", date_filter)
                 target_date = today
 
         date_str = target_date.isoformat()  # "YYYY-MM-DD"
