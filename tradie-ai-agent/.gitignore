@@ -1,10 +1,18 @@
-# Lambda vendored dependencies and build artefacts
+# Build artefacts
+.build/
+**/*.zip
+
+# Claude Code
+.claude/
+
+# Lambda vendored dependencies
 lambdas/*/package/
-lambdas/**/*.zip
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# macOS
 .DS_Store
 
 # Python venv
