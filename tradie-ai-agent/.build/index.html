@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tradie Connect — My Jobs</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f4f5f7;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header .logo { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+    header .logo span { color: #f5a623; }
+    header .tagline { font-size: 13px; color: #aaa; margin-left: auto; }
+
+    /* ── Login card ── */
+    .login-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: calc(100vh - 60px);
+      padding: 24px;
+    }
+
+    .login-card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+      padding: 40px 36px;
+      width: 100%;
+      max-width: 400px;
+    }
+
+    .login-card h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+    .login-card p  { color: #666; font-size: 14px; margin-bottom: 28px; }
+
+    label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #444; }
+
+    input[type="tel"] {
+      width: 100%;
+      padding: 12px 14px;
+      font-size: 16px;
+      border: 1.5px solid #d0d5dd;
+      border-radius: 8px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input[type="tel"]:focus { border-color: #f5a623; }
+
+    .hint { font-size: 12px; color: #888; margin-top: 6px; }
+
+    .btn {
+      display: block;
+      width: 100%;
+      margin-top: 20px;
+      padding: 13px;
+      background: #f5a623;
+      color: #1a1a2e;
+      font-size: 15px;
+      font-weight: 700;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn:hover   { background: #e09400; }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .error-msg {
+      margin-top: 16px;
+      background: #fff0f0;
+      border: 1px solid #f5c2c7;
+      color: #c0392b;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+    }
+
+    /* ── Dashboard ── */
+    #dashboard { display: none; }
+
+    .dash-header {
+      background: #fff;
+      border-bottom: 1px solid #e8e8e8;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .dash-header .greeting { font-size: 15px; }
+    .dash-header .greeting strong { font-size: 17px; display: block; }
+
+    .status-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 20px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .badge-active   { background: #e6f9f0; color: #1a7f4b; }
+    .badge-inactive { background: #f5f5f5; color: #888; }
+
+    .logout-btn {
+      background: none;
+      border: 1.5px solid #d0d5dd;
+      border-radius: 8px;
+      padding: 7px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      color: #444;
+      font-weight: 600;
+    }
+    .logout-btn:hover { border-color: #f5a623; color: #1a1a2e; }
+
+    .jobs-section { padding: 24px; max-width: 800px; margin: 0 auto; }
+
+    .jobs-section h2 { font-size: 17px; font-weight: 700; margin-bottom: 16px; color: #1a1a2e; }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #888;
+    }
+    .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+    .empty-state p { font-size: 15px; }
+
+    /* ── Job card ── */
+    .job-card {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+
+    .job-card-header {
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .job-ref { font-size: 13px; font-weight: 700; color: #1a1a2e; font-family: monospace; letter-spacing: 0.5px; }
+    .job-date { font-size: 12px; color: #888; }
+
+    .job-status {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 20px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .status-assigned           { background: #e6f9f0; color: #1a7f4b; }
+    .status-pending_assignment { background: #fff8e6; color: #b7660c; }
+
+    .job-card-body { padding: 16px 18px; }
+
+    .job-field { margin-bottom: 10px; }
+    .job-field:last-child { margin-bottom: 0; }
+    .job-label { font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+    .job-value { font-size: 14px; color: #1a1a2e; }
+
+    .urgency-emergency { color: #c0392b; font-weight: 700; }
+    .urgency-standard  { color: #444; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+    /* ── Loading spinner ── */
+    .spinner {
+      width: 20px; height: 20px;
+      border: 2px solid rgba(26,26,46,0.2);
+      border-top-color: #1a1a2e;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: inline-block;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 500px) {
+      .login-card { padding: 28px 20px; }
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Header (always visible) -->
+<header>
+  <div class="logo">Tradie<span>Connect</span></div>
+  <div class="tagline" id="header-tagline">Tradie Portal</div>
+</header>
+
+<!-- Login screen -->
+<div class="login-wrap" id="login-screen">
+  <div class="login-card">
+    <h1>Welcome back</h1>
+    <p>Enter your 6-digit tradie code to view your assigned jobs.</p>
+
+    <label for="code-input">Tradie code</label>
+    <input
+      type="text"
+      id="code-input"
+      placeholder="e.g. 482719"
+      maxlength="6"
+      inputmode="numeric"
+      pattern="[0-9]{6}"
+      autocomplete="one-time-code"
+    />
+    <div class="hint">Your 6-digit code from Tradie Connect. Same code works on any device or when you call in.</div>
+
+    <button class="btn" id="login-btn" onclick="doLogin()">View my jobs</button>
+    <div class="error-msg" id="login-error" style="display:none;"></div>
+  </div>
+</div>
+
+<!-- Dashboard screen -->
+<div id="dashboard">
+  <div class="dash-header">
+    <div class="greeting">
+      <strong id="tradie-name"></strong>
+      <span id="tradie-biz" style="color:#666; font-size:13px;"></span>
+    </div>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <span class="status-badge" id="active-badge"></span>
+      <button class="logout-btn" onclick="doLogout()">Log out</button>
+    </div>
+  </div>
+
+  <div class="jobs-section">
+    <h2 id="jobs-heading">My Jobs</h2>
+    <div id="jobs-list"></div>
+  </div>
+</div>
+
+<script>
+  // Injected by deploy.sh — do not edit manually
+  const API_URL = 'https://qaj1dm1df6.execute-api.ap-southeast-2.amazonaws.com';
+
+  let currentPhone = null;
+
+  // ── Login ──────────────────────────────────────────────────────────────────
+
+  document.getElementById('code-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin();
+  });
+
+  // Only allow digits in the code field
+  document.getElementById('code-input').addEventListener('input', e => {
+    e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+  });
+
+  async function doLogin() {
+    const code = document.getElementById('code-input').value.trim();
+    if (!code)            return showLoginError('Please enter your tradie code.');
+    if (code.length !== 6) return showLoginError('Tradie code must be 6 digits.');
+
+    const btn = document.getElementById('login-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>';
+    hideLoginError();
+
+    try {
+      const res  = await fetch(`${API_URL}/login`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ code }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        showLoginError(data.error || 'Login failed. Please try again.');
+        return;
+      }
+
+      currentPhone = phone;
+      showDashboard(data);
+      loadJobs(phone);
+
+    } catch (err) {
+      showLoginError('Network error. Please check your connection.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'View my jobs';
+    }
+  }
+
+  // ── Dashboard ──────────────────────────────────────────────────────────────
+
+  function showDashboard(tradie) {
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('dashboard').style.display    = 'block';
+
+    document.getElementById('tradie-name').textContent = tradie.name;
+    document.getElementById('tradie-biz').textContent  = tradie.business_name || '';
+    document.getElementById('header-tagline').textContent =
+      `${tradie.trade_type.charAt(0).toUpperCase() + tradie.trade_type.slice(1)} — ${tradie.location || ''}`;
+
+    const badge = document.getElementById('active-badge');
+    badge.textContent  = tradie.active ? 'Active' : 'Inactive';
+    badge.className    = `status-badge ${tradie.active ? 'badge-active' : 'badge-inactive'}`;
+  }
+
+  async function loadJobs(phone) {
+    const list = document.getElementById('jobs-list');
+    list.innerHTML = '<div style="padding:32px 0; text-align:center;"><span class="spinner" style="width:32px;height:32px;border-width:3px;"></span></div>';
+
+    try {
+      const res  = await fetch(`${API_URL}/jobs?phone=${encodeURIComponent(phone)}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        list.innerHTML = `<div class="error-msg">${data.error || 'Could not load jobs.'}</div>`;
+        return;
+      }
+
+      const jobs = data.jobs || [];
+      document.getElementById('jobs-heading').textContent = `My Jobs (${jobs.length})`;
+
+      if (jobs.length === 0) {
+        list.innerHTML = `
+          <div class="empty-state">
+            <div class="icon">📋</div>
+            <p>No jobs assigned to you yet.</p>
+          </div>`;
+        return;
+      }
+
+      list.innerHTML = jobs.map(renderJob).join('');
+
+    } catch (err) {
+      list.innerHTML = '<div class="error-msg">Network error loading jobs.</div>';
+    }
+  }
+
+  function renderJob(job) {
+    const status      = (job.status || '').toLowerCase();
+    const statusLabel = status === 'assigned' ? 'Assigned' : 'Pending';
+    const statusClass = `job-status status-${status}`;
+    const urgency     = (job.urgency || 'standard').toUpperCase();
+    const urgencyClass = urgency === 'EMERGENCY' ? 'urgency-emergency' : 'urgency-standard';
+    const customer    = job.customer || {};
+    const jobInfo     = job.job      || {};
+    const date        = job.created_at
+      ? new Date(job.created_at).toLocaleString('en-AU', { dateStyle: 'medium', timeStyle: 'short' })
+      : '—';
+
+    return `
+      <div class="job-card">
+        <div class="job-card-header">
+          <div>
+            <div class="job-ref">${job.job_id || '—'}</div>
+            <div class="job-date">${date}</div>
+          </div>
+          <span class="${statusClass}">${statusLabel}</span>
+        </div>
+        <div class="job-card-body">
+          <div class="grid-2">
+            <div class="job-field">
+              <div class="job-label">Customer</div>
+              <div class="job-value">${customer.name || '—'}</div>
+            </div>
+            <div class="job-field">
+              <div class="job-label">Callback</div>
+              <div class="job-value">${customer.callback_number || '—'}</div>
+            </div>
+          </div>
+          <div class="job-field" style="margin-top:10px;">
+            <div class="job-label">Address</div>
+            <div class="job-value">${customer.address || '—'}</div>
+          </div>
+          <div class="job-field">
+            <div class="job-label">Job details</div>
+            <div class="job-value">${jobInfo.problem_description || '—'}</div>
+          </div>
+          <div class="grid-2">
+            <div class="job-field">
+              <div class="job-label">Urgency</div>
+              <div class="job-value ${urgencyClass}">${urgency}</div>
+            </div>
+            <div class="job-field">
+              <div class="job-label">Trade</div>
+              <div class="job-value">${jobInfo.service_type || '—'}</div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // ── Logout ─────────────────────────────────────────────────────────────────
+
+  function doLogout() {
+    currentPhone = null;
+    document.getElementById('dashboard').style.display    = 'none';
+    document.getElementById('login-screen').style.display = 'flex';
+    document.getElementById('code-input').value           = '';
+    document.getElementById('jobs-list').innerHTML        = '';
+    document.getElementById('header-tagline').textContent = 'Tradie Portal';
+  }
+
+  // ── helpers ─────────────────────────────────────────────────────────────────
+
+  function showLoginError(msg) {
+    const el = document.getElementById('login-error');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+
+  function hideLoginError() {
+    document.getElementById('login-error').style.display = 'none';
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod +x /Users/samratsom/tradie-ai-agent/scripts/manage_tradies.py)",
+      "Bash(chmod +x /Users/samratsom/tradie-ai-agent/scripts/deploy.sh)",
+      "Bash(aws bedrock-agent *)",
+      "Bash(aws bedrock *)",
+      "Bash(aws cloudformation *)",
+      "Bash(aws lexv2-models *)",
+      "Bash(aws dynamodb *)",
+      "Bash(aws connect *)"
+    ]
+  }
+}

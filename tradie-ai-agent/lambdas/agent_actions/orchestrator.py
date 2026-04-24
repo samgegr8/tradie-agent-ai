@@ -42,11 +42,10 @@ class MCPOrchestrator:
         service_type: str,
         problem_description: str,
         address: str,
-        preferred_time: str = "",
-        urgency: str = "standard",
     ) -> dict:
         """
         Creates a new job card in DynamoDB.
+        problemDescription is pipe-delimited: "description|YYYY-MM-DD|time slot|urgency"
         Returns job_id and confirmation details.
         """
         job_id     = f"JOB-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
@@ -54,11 +53,18 @@ class MCPOrchestrator:
 
         suburb = _extract_suburb(address)
 
+        # Parse pipe-delimited jobDetails: description|date|time|urgency
+        parts            = [p.strip() for p in problem_description.split("|")]
+        clean_desc       = parts[0] if len(parts) > 0 else problem_description
+        appointment_date = parts[1] if len(parts) > 1 else ""
+        appointment_time = parts[2] if len(parts) > 2 else ""
+        urgency          = parts[3].lower() if len(parts) > 3 else "standard"
+
         item = {
             "job_id":     job_id,
             "created_at": created_at,
             "status":     "PENDING_ASSIGNMENT",
-            "urgency":    urgency.upper(),
+            "urgency":    urgency.upper() if urgency else "STANDARD",
 
             "customer": {
                 "name":            customer_name,
@@ -69,8 +75,9 @@ class MCPOrchestrator:
 
             "job": {
                 "service_type":        service_type.lower(),
-                "problem_description": problem_description,
-                "preferred_time":      preferred_time,
+                "problem_description": clean_desc,
+                "appointment_date":    appointment_date,
+                "appointment_time":    appointment_time,
             },
 
             # Populated by assign_tradie_to_job
@@ -97,6 +104,37 @@ class MCPOrchestrator:
             "created_at": created_at,
             "suburb":     suburb,
             "message":    f"Job card {job_id} created successfully.",
+        }
+
+    # ── Tool 1b: lookup_tradie_by_code ────────────────────────────────────────
+    def lookup_tradie_by_code(self, tradie_code: str) -> dict:
+        """
+        Authenticates a tradie by their tradie_code.
+        Returns phone_number and profile — phone_number must be used for all
+        subsequent getJobsByTradie and completeJob calls.
+        """
+        table  = dynamodb.Table(TRADIES_TABLE)
+        result = table.scan(FilterExpression=Attr("tradie_code").eq(tradie_code.strip()))
+        items  = result.get("Items", [])
+
+        if not items:
+            logger.warning("lookup_tradie_by_code: code %s not found", tradie_code)
+            return {
+                "found":   False,
+                "message": "That code wasn't recognised. Please check your tradie code and try again.",
+            }
+
+        tradie = items[0]
+        logger.info("lookup_tradie_by_code: matched %s (%s)", tradie["name"], tradie["phone_number"])
+
+        return {
+            "found":         True,
+            "phone_number":  tradie["phone_number"],
+            "name":          tradie["name"],
+            "business_name": tradie.get("business_name", ""),
+            "trade_type":    tradie.get("trade_type", ""),
+            "active":        tradie.get("active", False),
+            "message":       f"Welcome, {tradie['name']}.",
         }
 
     # ── Tool 2: lookup_available_tradie ────────────────────────────────────────
@@ -197,6 +235,120 @@ class MCPOrchestrator:
             "tradie_name":  tradie["name"],
             "tradie_phone": tradie["phone_number"],
             "message":      f"{tradie['name']} has been assigned to job {job_id}. They will be contacted shortly.",
+        }
+
+    # ── Tool 5: get_jobs_by_tradie ────────────────────────────────────────────
+    def get_jobs_by_tradie(self, tradie_phone: str, date_filter: str = "today") -> dict:
+        """
+        Returns jobs assigned to a tradie on a given date.
+        date_filter: "today", "tomorrow", or ISO date string "YYYY-MM-DD".
+        Filters by created_at date prefix and excludes COMPLETED jobs.
+        """
+        from datetime import timedelta
+
+        today = datetime.now(timezone.utc).date()
+
+        if date_filter.lower() == "today":
+            target_date = today
+        elif date_filter.lower() == "tomorrow":
+            target_date = today + timedelta(days=1)
+        else:
+            try:
+                target_date = datetime.strptime(date_filter[:10], "%Y-%m-%d").date()
+            except ValueError:
+                target_date = today
+
+        date_str = target_date.isoformat()  # "YYYY-MM-DD"
+
+        table  = dynamodb.Table(JOBS_TABLE)
+        result = table.scan(
+            FilterExpression=(
+                Attr("tradie.phone").eq(tradie_phone)
+                & Attr("job.appointment_date").eq(date_str)
+                & Attr("status").ne("COMPLETED")
+            )
+        )
+
+        jobs = sorted(result.get("Items", []), key=lambda j: j.get("created_at", ""))
+
+        logger.info("get_jobs_by_tradie: %d jobs for %s on %s", len(jobs), tradie_phone, date_str)
+
+        if not jobs:
+            return {
+                "jobs_found": False,
+                "date":       date_str,
+                "count":      0,
+                "jobs":       [],
+                "message":    f"No active jobs found for {date_str}.",
+            }
+
+        summaries = [
+            {
+                "job_id":              j["job_id"],
+                "status":              j.get("status", ""),
+                "urgency":             j.get("urgency", ""),
+                "customer_name":       (j.get("customer") or {}).get("name", ""),
+                "address":             (j.get("customer") or {}).get("address", ""),
+                "callback_number":     (j.get("customer") or {}).get("callback_number", ""),
+                "problem_description": (j.get("job") or {}).get("problem_description", ""),
+                "appointment_date":    (j.get("job") or {}).get("appointment_date", ""),
+                "appointment_time":    (j.get("job") or {}).get("appointment_time", ""),
+            }
+            for j in jobs
+        ]
+
+        return {
+            "jobs_found": True,
+            "date":       date_str,
+            "count":      len(jobs),
+            "jobs":       summaries,
+            "message":    f"Found {len(jobs)} active job(s) for {date_str}.",
+        }
+
+    # ── Tool 6: complete_job ──────────────────────────────────────────────────
+    def complete_job(self, job_id: str, tradie_phone: str) -> dict:
+        """
+        Marks a job as COMPLETED. Verifies that tradie_phone matches the assigned
+        tradie on the job — prevents one tradie completing another's job.
+        """
+        table  = dynamodb.Table(JOBS_TABLE)
+        result = table.get_item(Key={"job_id": job_id})
+        job    = result.get("Item")
+
+        if not job:
+            return {"success": False, "message": f"Job {job_id} not found."}
+
+        assigned_phone = (job.get("tradie") or {}).get("phone", "")
+        if assigned_phone != tradie_phone:
+            logger.warning(
+                "complete_job: tradie %s tried to complete job %s assigned to %s",
+                tradie_phone, job_id, assigned_phone,
+            )
+            return {"success": False, "message": f"Job {job_id} is not assigned to your number."}
+
+        if job.get("status") == "COMPLETED":
+            return {"success": False, "message": f"Job {job_id} is already marked as completed."}
+
+        completed_at = datetime.now(timezone.utc).isoformat()
+
+        table.update_item(
+            Key={"job_id": job_id},
+            UpdateExpression="SET #status = :status, completed_at = :completed_at",
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues={
+                ":status":       "COMPLETED",
+                ":completed_at": completed_at,
+            },
+        )
+
+        logger.info("Job %s marked COMPLETED by tradie %s", job_id, tradie_phone)
+
+        return {
+            "success":        True,
+            "job_id":         job_id,
+            "completed_at":   completed_at,
+            "customer_name":  (job.get("customer") or {}).get("name", ""),
+            "message":        f"Job {job_id} has been marked as completed.",
         }
 
     # ── Tool 4 (stub): log_job_notification ───────────────────────────────────

@@ -16,7 +16,8 @@ CONNECT_INSTANCE_ALIAS="${3:-}"
 
 REGION="ap-southeast-2"
 STACK_NAME="tradie-connect-agent-${ENV}"
-AGENT_NAME="TradieConnectAgent-${ENV}"
+AGENT_NAME="TradieConnect-CustomerAgent-${ENV}"
+AGENT_NAME_LEGACY="TradieConnectAgent-${ENV}"
 AGENT_MODEL="au.anthropic.claude-haiku-4-5-20251001-v1:0"
 BUILD_DIR=".build"
 LAMBDA_SRC="lambdas/agent_actions"
@@ -166,30 +167,46 @@ log "  BedrockAgentExecutionRole: ${BEDROCK_ROLE_ARN}"
 # Force Lambda code updates (macOS bash 3 does not support declare -A)
 log "  Forcing Lambda code updates ..."
 aws lambda update-function-code \
-  --function-name "tradie-agent-actions-${ENV}" \
+  --function-name "tradie-connect-actions-${ENV}" \
   --s3-bucket "$CODE_BUCKET" --s3-key "lambda/agent_actions.zip" \
   --region "$REGION" --output text --query "LastUpdateStatus"
-aws lambda wait function-updated --function-name "tradie-agent-actions-${ENV}" --region "$REGION"
+aws lambda wait function-updated --function-name "tradie-connect-actions-${ENV}" --region "$REGION"
 
 aws lambda update-function-code \
-  --function-name "tradie-lex-fulfillment-${ENV}" \
+  --function-name "tradie-connect-customer-lex-${ENV}" \
   --s3-bucket "$CODE_BUCKET" --s3-key "lambda/lex_fulfillment.zip" \
   --region "$REGION" --output text --query "LastUpdateStatus"
-aws lambda wait function-updated --function-name "tradie-lex-fulfillment-${ENV}" --region "$REGION"
+aws lambda wait function-updated --function-name "tradie-connect-customer-lex-${ENV}" --region "$REGION"
 log "  Lambdas updated."
 
 # ── Step 4: Create or reuse Bedrock Agent ─────────────────────────────────────
 log "Step 4/6 — Bedrock Agent ..."
 
+INSTRUCTION=$(cat connect_agent_system_prompt.txt)
+
+# Check by new name first, fall back to legacy name for existing deployments
 EXISTING_AGENT_ID=$(aws bedrock-agent list-agents --region "$REGION" \
   --query "agentSummaries[?agentName=='${AGENT_NAME}'].agentId" --output text 2>/dev/null || true)
+if [[ -z "$EXISTING_AGENT_ID" || "$EXISTING_AGENT_ID" == "None" ]]; then
+  EXISTING_AGENT_ID=$(aws bedrock-agent list-agents --region "$REGION" \
+    --query "agentSummaries[?agentName=='${AGENT_NAME_LEGACY}'].agentId" --output text 2>/dev/null || true)
+  [[ -n "$EXISTING_AGENT_ID" && "$EXISTING_AGENT_ID" != "None" ]] && \
+    log "  Found agent under legacy name '${AGENT_NAME_LEGACY}' — will rename."
+fi
 
 if [[ -n "$EXISTING_AGENT_ID" && "$EXISTING_AGENT_ID" != "None" ]]; then
-  log "  Agent already exists (${EXISTING_AGENT_ID}) — skipping create."
+  log "  Updating agent (${EXISTING_AGENT_ID}) ..."
   AGENT_ID="$EXISTING_AGENT_ID"
+  aws bedrock-agent update-agent \
+    --agent-id "$AGENT_ID" \
+    --agent-name "$AGENT_NAME" \
+    --foundation-model "$AGENT_MODEL" \
+    --agent-resource-role-arn "$BEDROCK_ROLE_ARN" \
+    --instruction "$INSTRUCTION" \
+    --region "$REGION" > /dev/null
+  log "  Agent updated."
 else
-  log "  Creating agent '${AGENT_NAME}' with model ${AGENT_MODEL} ..."
-  INSTRUCTION=$(cat connect_agent_system_prompt.txt)
+  log "  Creating agent '${AGENT_NAME}' ..."
   AGENT_ID=$(aws bedrock-agent create-agent \
     --agent-name "$AGENT_NAME" \
     --foundation-model "$AGENT_MODEL" \
@@ -201,13 +218,63 @@ else
   log "  Agent created: ${AGENT_ID}"
 fi
 
-# Create or reuse action group
-EXISTING_AG=$(aws bedrock-agent list-agent-action-groups \
+# Action group schema — always create or update so Lambda ARN and schema stay current
+CUSTOMER_AG_SCHEMA='{
+  "functions": [
+    {
+      "name": "createJobCard",
+      "description": "Creates a new job card in DynamoDB with customer and job details. Always call this first.",
+      "parameters": {
+        "customerName":       {"type":"string","required":true,"description":"Full name of the customer calling in."},
+        "callbackNumber":     {"type":"string","required":true,"description":"Customer phone number for callback."},
+        "serviceType":        {"type":"string","required":true,"description":"Type of trade required e.g. plumber, electrician, carpenter."},
+        "address":            {"type":"string","required":true,"description":"Full street address including suburb, state and postcode."},
+        "problemDescription": {"type":"string","required":true,"description":"Pipe-delimited: problem description|YYYY-MM-DD appointment date|time slot|urgency. e.g. Leaking tap under kitchen sink|2026-04-25|morning|standard"}
+      }
+    },
+    {
+      "name": "lookupAvailableTradie",
+      "description": "Finds an available tradie matching the service type and suburb. Call this after createJobCard.",
+      "parameters": {
+        "serviceType": {"type":"string","required":true, "description":"Trade type to match, must match what was passed to createJobCard."},
+        "suburb":      {"type":"string","required":false,"description":"Suburb from the customer address, used to prefer a nearby tradie."}
+      }
+    },
+    {
+      "name": "assignTradieToJob",
+      "description": "Assigns the matched tradie to the job card. Call this after lookupAvailableTradie.",
+      "parameters": {
+        "jobId":    {"type":"string","required":true,"description":"Job ID returned by createJobCard."},
+        "tradieId": {"type":"string","required":true,"description":"Tradie ID returned by lookupAvailableTradie."}
+      }
+    },
+    {
+      "name": "logJobNotification",
+      "description": "Logs the notification intent for the assigned tradie. Call this last, after assignTradieToJob.",
+      "parameters": {
+        "jobId":       {"type":"string","required":true,"description":"Job ID of the assigned job."},
+        "tradiePhone": {"type":"string","required":true,"description":"Phone number of the assigned tradie."}
+      }
+    }
+  ]
+}'
+
+EXISTING_AG_ID=$(aws bedrock-agent list-agent-action-groups \
   --agent-id "$AGENT_ID" --agent-version DRAFT --region "$REGION" \
   --query "actionGroupSummaries[?actionGroupName=='JobManagement'].actionGroupId" --output text 2>/dev/null || true)
 
-if [[ -n "$EXISTING_AG" && "$EXISTING_AG" != "None" ]]; then
-  log "  Action group JobManagement already exists — skipping create."
+if [[ -n "$EXISTING_AG_ID" && "$EXISTING_AG_ID" != "None" ]]; then
+  log "  Updating JobManagement action group (${EXISTING_AG_ID}) ..."
+  aws bedrock-agent update-agent-action-group \
+    --agent-id "$AGENT_ID" \
+    --agent-version DRAFT \
+    --action-group-id "$EXISTING_AG_ID" \
+    --action-group-name JobManagement \
+    --description "Job card creation, tradie lookup, assignment, and notification logging" \
+    --action-group-executor "{\"lambda\":\"${LAMBDA_ARN}\"}" \
+    --function-schema "$CUSTOMER_AG_SCHEMA" \
+    --region "$REGION" > /dev/null
+  log "  Action group updated."
 else
   log "  Creating JobManagement action group ..."
   aws bedrock-agent create-agent-action-group \
@@ -216,45 +283,7 @@ else
     --action-group-name JobManagement \
     --description "Job card creation, tradie lookup, assignment, and notification logging" \
     --action-group-executor "{\"lambda\":\"${LAMBDA_ARN}\"}" \
-    --function-schema '{
-      "functions": [
-        {
-          "name": "createJobCard",
-          "description": "Creates a new job card in DynamoDB with customer and job details. Always call this first.",
-          "parameters": {
-            "customerName":       {"type":"string","required":true,"description":"Full name of the customer calling in."},
-            "callbackNumber":     {"type":"string","required":true,"description":"Customer phone number for callback."},
-            "serviceType":        {"type":"string","required":true,"description":"Type of trade required e.g. plumber, electrician, carpenter."},
-            "address":            {"type":"string","required":true,"description":"Full street address including suburb, state and postcode."},
-            "problemDescription": {"type":"string","required":true,"description":"Description of the problem, preferred time, and urgency e.g. Leaking tap, tomorrow morning, standard."}
-          }
-        },
-        {
-          "name": "lookupAvailableTradie",
-          "description": "Finds an available tradie matching the service type and suburb. Call this after createJobCard.",
-          "parameters": {
-            "serviceType": {"type":"string","required":true, "description":"Trade type to match, must match what was passed to createJobCard."},
-            "suburb":      {"type":"string","required":false,"description":"Suburb from the customer address, used to prefer a nearby tradie."}
-          }
-        },
-        {
-          "name": "assignTradieToJob",
-          "description": "Assigns the matched tradie to the job card. Call this after lookupAvailableTradie.",
-          "parameters": {
-            "jobId":    {"type":"string","required":true,"description":"Job ID returned by createJobCard."},
-            "tradieId": {"type":"string","required":true,"description":"Tradie ID returned by lookupAvailableTradie."}
-          }
-        },
-        {
-          "name": "logJobNotification",
-          "description": "Logs the notification intent for the assigned tradie. Call this last, after assignTradieToJob.",
-          "parameters": {
-            "jobId":       {"type":"string","required":true,"description":"Job ID of the assigned job."},
-            "tradiePhone": {"type":"string","required":true,"description":"Phone number of the assigned tradie."}
-          }
-        }
-      ]
-    }' \
+    --function-schema "$CUSTOMER_AG_SCHEMA" \
     --region "$REGION" \
     --query "agentActionGroup.actionGroupState" --output text
   log "  Action group created."
@@ -270,8 +299,13 @@ log "  Agent status: ${AGENT_STATUS}"
 
 # Create or reuse alias
 EXISTING_ALIAS=$(aws bedrock-agent list-agent-aliases \
-  --agent-id "$AGENT_ID" --region "$REGION" \
-  --query "agentAliasSummaries[?agentAliasName=='live'].agentAliasId" --output text 2>/dev/null || true)
+  --agent-id "$AGENT_ID" --region "$REGION" --output json 2>/dev/null | \
+  python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+m = [a['agentAliasId'] for a in data.get('agentAliasSummaries', []) if a['agentAliasName'].lower() == 'live']
+print(m[0] if m else '')
+" || true)
 
 if [[ -n "$EXISTING_ALIAS" && "$EXISTING_ALIAS" != "None" ]]; then
   log "  Alias 'live' already exists (${EXISTING_ALIAS}) — skipping create."

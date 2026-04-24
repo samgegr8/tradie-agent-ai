@@ -1,0 +1,178 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Tradie Connect — Tradie Self-Service Portal
+  S3 static website + HTTP API (API Gateway v2) + Lambda backend.
+  Auth: phone-number lookup only (MVP). Upgrade to OTP when Twilio is integrated.
+
+Parameters:
+  Env:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+
+  CodeBucket:
+    Type: String
+    Description: S3 bucket containing Lambda zip files
+
+# ── Resources ──────────────────────────────────────────────────────────────────
+Resources:
+
+  # ── 1. S3 bucket for the static portal ────────────────────────────────────────
+  PortalBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "tradie-portal-${Env}-${AWS::AccountId}"
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls:       false
+        BlockPublicPolicy:     false
+        IgnorePublicAcls:      false
+        RestrictPublicBuckets: false
+      Tags:
+        - Key: Project
+          Value: TradieConnect
+        - Key: Env
+          Value: !Ref Env
+
+  PortalBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PortalBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "${PortalBucket.Arn}/*"
+
+  # ── 2. Portal API Lambda IAM role ─────────────────────────────────────────────
+  PortalApiLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "tradie-portal-api-role-${Env}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: PortalApiPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # TradiesTable — read only (login lookup)
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Scan
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/TradiesTable-${Env}"
+              # JobsTable — read only (job list)
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/JobsTable-${Env}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/JobsTable-${Env}/index/*"
+
+  # ── 3. Portal API Lambda ───────────────────────────────────────────────────────
+  PortalApiLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "tradie-portal-api-${Env}"
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !GetAtt PortalApiLambdaRole.Arn
+      Timeout: 15
+      MemorySize: 128
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: lambda/portal_api.zip
+      Environment:
+        Variables:
+          TRADIES_TABLE: !Sub "TradiesTable-${Env}"
+          JOBS_TABLE:    !Sub "JobsTable-${Env}"
+          ENV:           !Ref Env
+      Tags:
+        - Key: Project
+          Value: TradieConnect
+        - Key: Env
+          Value: !Ref Env
+
+  # ── 4. HTTP API (API Gateway v2) ───────────────────────────────────────────────
+  PortalHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name:         !Sub "tradie-portal-api-${Env}"
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: ["*"]
+        AllowMethods: ["GET", "POST", "OPTIONS"]
+        AllowHeaders: ["content-type"]
+      Tags:
+        Project: TradieConnect
+        Env:     !Ref Env
+
+  PortalApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId:                !Ref PortalHttpApi
+      IntegrationType:      AWS_PROXY
+      IntegrationUri:       !GetAtt PortalApiLambda.Arn
+      PayloadFormatVersion: "2.0"
+
+  PortalLoginRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:    !Ref PortalHttpApi
+      RouteKey: "POST /login"
+      Target:   !Sub "integrations/${PortalApiIntegration}"
+
+  PortalJobsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:    !Ref PortalHttpApi
+      RouteKey: "GET /jobs"
+      Target:   !Sub "integrations/${PortalApiIntegration}"
+
+  PortalApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId:      !Ref PortalHttpApi
+      StageName:  "$default"
+      AutoDeploy: true
+
+  # ── 5. Allow API Gateway to invoke the Lambda ──────────────────────────────────
+  PortalApiLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt PortalApiLambda.Arn
+      Action:       lambda:InvokeFunction
+      Principal:    apigateway.amazonaws.com
+      SourceArn:    !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PortalHttpApi}/*"
+
+# ── Outputs ────────────────────────────────────────────────────────────────────
+Outputs:
+
+  PortalWebsiteUrl:
+    Value: !Sub "http://${PortalBucket}.s3-website-${AWS::Region}.amazonaws.com"
+    Description: S3 static website URL (share this with tradies)
+    Export:
+      Name: !Sub "TradieConnect-PortalUrl-${Env}"
+
+  PortalApiUrl:
+    Value: !Sub "https://${PortalHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+    Description: API base URL — injected into index.html by deploy_portal.sh
+    Export:
+      Name: !Sub "TradieConnect-PortalApiUrl-${Env}"
+
+  PortalBucketName:
+    Value: !Ref PortalBucket
+    Export:
+      Name: !Sub "TradieConnect-PortalBucket-${Env}"

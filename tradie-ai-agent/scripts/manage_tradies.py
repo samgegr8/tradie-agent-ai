@@ -19,6 +19,7 @@ TradiesTable schema (phone_number is the primary key):
 """
 
 import argparse
+import secrets
 import sys
 import boto3
 from boto3.dynamodb.conditions import Attr
@@ -28,6 +29,7 @@ REGION = "ap-southeast-2"
 SEED_TRADIES = [
     {
         "phone_number":  "+61411000001",
+        "tradie_code":   "100001",
         "name":          "Dave Nguyen",
         "business_name": "Nguyen Plumbing",
         "trade_type":    "plumber",
@@ -36,6 +38,7 @@ SEED_TRADIES = [
     },
     {
         "phone_number":  "+61411000002",
+        "tradie_code":   "100002",
         "name":          "Sarah Kim",
         "business_name": "Kim Electrical",
         "trade_type":    "electrician",
@@ -44,6 +47,7 @@ SEED_TRADIES = [
     },
     {
         "phone_number":  "+61411000003",
+        "tradie_code":   "100003",
         "name":          "Tom Walsh",
         "business_name": "Walsh Carpentry",
         "trade_type":    "carpenter",
@@ -52,6 +56,7 @@ SEED_TRADIES = [
     },
     {
         "phone_number":  "+61411000004",
+        "tradie_code":   "100004",
         "name":          "Maria Santos",
         "business_name": "Santos Plumbing & Gas",
         "trade_type":    "plumber",
@@ -60,6 +65,7 @@ SEED_TRADIES = [
     },
     {
         "phone_number":  "+61411000005",
+        "tradie_code":   "100005",
         "name":          "Jake Thornton",
         "business_name": "Thornton Electrical",
         "trade_type":    "electrician",
@@ -68,6 +74,7 @@ SEED_TRADIES = [
     },
     {
         "phone_number":  "+61411000006",
+        "tradie_code":   "100006",
         "name":          "Priya Patel",
         "business_name": "Patel Painting",
         "trade_type":    "painter",
@@ -76,6 +83,7 @@ SEED_TRADIES = [
     },
     {
         "phone_number":  "+61411000007",
+        "tradie_code":   "100007",
         "name":          "Chris O'Brien",
         "business_name": "O'Brien Tiling",
         "trade_type":    "tiler",
@@ -106,11 +114,12 @@ def cmd_list(env: str):
     if not items:
         print(f"No tradies in TradiesTable-{env}.")
         return
-    fmt = "{:<15} {:<22} {:<14} {:<12} {}"
-    print(fmt.format("PHONE", "NAME", "TRADE", "ACTIVE", "LOCATION"))
-    print("-" * 80)
+    fmt = "{:<8} {:<15} {:<22} {:<14} {:<8} {}"
+    print(fmt.format("CODE", "PHONE", "NAME", "TRADE", "ACTIVE", "LOCATION"))
+    print("-" * 90)
     for t in items:
         print(fmt.format(
+            t.get("tradie_code", "—"),
             t["phone_number"],
             t["name"],
             t["trade_type"],
@@ -121,16 +130,19 @@ def cmd_list(env: str):
 
 def cmd_add(env: str):
     print("Add new tradie (Ctrl-C to cancel)")
+    tbl = _table(env)
     tradie = {
         "phone_number":  _prompt("Phone (+614XXXXXXXX)"),
+        "tradie_code":   _generate_unique_code(tbl),
         "name":          _prompt("Full name"),
         "business_name": _prompt("Business name (optional)", optional=True),
         "trade_type":    _prompt("Trade type (plumber / electrician / carpenter / ...)").lower(),
         "location":      _prompt("Suburbs served (comma-separated)"),
         "active":        _prompt_bool("Active?", default=True),
     }
-    _table(env).put_item(Item=tradie)
+    tbl.put_item(Item=tradie)
     print(f"Added {tradie['name']} ({tradie['phone_number']}).")
+    print(f"  Tradie code: {tradie['tradie_code']}  ← give this to the tradie")
 
 
 def cmd_update(env: str, phone: str):
@@ -202,7 +214,29 @@ def cmd_toggle(env: str, phone: str):
     print(f"{t['name']} ({phone}) is now {status}.")
 
 
+def cmd_show_code(env: str, phone: str):
+    tbl  = _table(env)
+    resp = tbl.get_item(Key={"phone_number": phone})
+    t    = resp.get("Item")
+    if not t:
+        sys.exit(f"Tradie {phone} not found.")
+    code = t.get("tradie_code", "NOT SET")
+    print(f"{t['name']} ({phone})  →  tradie code: {code}")
+
+
 # ── helpers ────────────────────────────────────────────────────────────────────
+
+def _generate_unique_code(tbl) -> str:
+    """Generate a unique 6-digit tradie code, retrying on collision."""
+    existing = {item.get("tradie_code") for item in tbl.scan(
+        ProjectionExpression="tradie_code"
+    ).get("Items", [])}
+    for _ in range(20):
+        code = "".join(secrets.choice("0123456789") for _ in range(6))
+        if code not in existing:
+            return code
+    raise RuntimeError("Could not generate a unique tradie code after 20 attempts.")
+
 
 def _prompt(label: str, optional: bool = False) -> str:
     while True:
@@ -224,8 +258,8 @@ def _prompt_bool(label: str, default: bool = True) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="Manage TradiesTable entries")
-    parser.add_argument("command", choices=["seed", "list", "add", "update", "delete", "toggle"])
-    parser.add_argument("phone",   nargs="?", help="Tradie phone number (PK) for update/delete/toggle")
+    parser.add_argument("command", choices=["seed", "list", "add", "update", "delete", "toggle", "show-code"])
+    parser.add_argument("phone",   nargs="?", help="Tradie phone number (PK) for update/delete/toggle/show-code")
     parser.add_argument("--env",   default="dev", choices=["dev", "staging", "prod"])
     args = parser.parse_args()
 
@@ -235,7 +269,7 @@ def main():
         cmd_list(args.env)
     elif args.command == "add":
         cmd_add(args.env)
-    elif args.command in ("update", "delete", "toggle"):
+    elif args.command in ("update", "delete", "toggle", "show-code"):
         if not args.phone:
             sys.exit(f"'{args.command}' requires a phone number argument.")
         if args.command == "update":
@@ -244,6 +278,8 @@ def main():
             cmd_delete(args.env, args.phone)
         elif args.command == "toggle":
             cmd_toggle(args.env, args.phone)
+        elif args.command == "show-code":
+            cmd_show_code(args.env, args.phone)
 
 
 if __name__ == "__main__":

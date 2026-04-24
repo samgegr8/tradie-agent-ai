@@ -1,0 +1,241 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Tradie Connect — Tradie-Facing Agent Infrastructure
+  Deploys the Lex V2 bot, fulfillment Lambda, and Bedrock execution role for
+  the tradie-facing agent (code auth, job reminders, job completion).
+  The Bedrock Agent itself is created by deploy_tradie_agent.sh.
+
+Parameters:
+  Env:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+
+  CodeBucket:
+    Type: String
+    Description: S3 bucket containing Lambda zip files
+
+  AgentActionLambdaArn:
+    Type: String
+    Description: ARN of the shared agent-actions Lambda (from tradie-connect-agent stack)
+
+  TradieBedrockAgentId:
+    Type: String
+    Default: ""
+    Description: Tradie Bedrock Agent ID — blank on first deploy, populated by deploy_tradie_agent.sh
+
+  TradieBedrockAgentAliasId:
+    Type: String
+    Default: ""
+    Description: Tradie Bedrock Agent Alias ID — blank on first deploy, populated by deploy_tradie_agent.sh
+
+# ── Resources ──────────────────────────────────────────────────────────────────
+Resources:
+
+  # ── 1. Bedrock execution role for the tradie agent ─────────────────────────
+  TradieBedrockAgentExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "tradie-connect-tradie-bedrock-role-${Env}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: TradieBedrockAgentExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:GetInferenceProfile
+                  - bedrock:ListInferenceProfiles
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !Ref AgentActionLambdaArn
+
+  # ── 2. Lex fulfillment Lambda role ─────────────────────────────────────────
+  TradieLexFulfillmentLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "tradie-connect-tradie-lex-role-${Env}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: TradieLexFulfillmentPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeAgent
+                Resource: !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${TradieBedrockAgentId}/${TradieBedrockAgentAliasId}"
+
+  # ── 3. Lex fulfillment Lambda (same code as customer bot, different agent) ─
+  TradieLexFulfillmentLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "tradie-connect-tradie-lex-${Env}"
+      Runtime: python3.12
+      Handler: handler.lambda_handler
+      Role: !GetAtt TradieLexFulfillmentLambdaRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: lambda/lex_fulfillment.zip
+      Environment:
+        Variables:
+          BEDROCK_AGENT_ID:       !Ref TradieBedrockAgentId
+          BEDROCK_AGENT_ALIAS_ID: !Ref TradieBedrockAgentAliasId
+      Tags:
+        - Key: Project
+          Value: TradieConnect
+        - Key: Env
+          Value: !Ref Env
+
+  # ── 4. Allow Lex to invoke the fulfillment Lambda ──────────────────────────
+  TradieLexFulfillmentLambdaLexPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt TradieLexFulfillmentLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: lexv2.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  # ── 5. Allow the tradie Bedrock agent to invoke the shared action Lambda ───
+  TradieAgentActionLambdaBedrockPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AgentActionLambdaArn
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  # ── 6. IAM role for the Lex bot (Polly TTS synthesis) ─────────────────────
+  TradieLexBotRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "tradie-connect-lex-bot-role-${Env}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lexv2.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: TradieLexBotPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: polly:SynthesizeSpeech
+                Resource: "*"
+
+  # ── 7. Lex V2 bot ──────────────────────────────────────────────────────────
+  TradieLexBot:
+    Type: AWS::Lex::Bot
+    Properties:
+      Name: !Sub "TradieConnect-TradieBot-${Env}"
+      RoleArn: !GetAtt TradieLexBotRole.Arn
+      DataPrivacy:
+        ChildDirected: false
+      IdleSessionTTLInSeconds: 300
+      AutoBuildBotLocales: true
+      BotLocales:
+        - LocaleId: en_AU
+          NluConfidenceThreshold: 0.40
+          VoiceSettings:
+            VoiceId: Olivia
+            Engine: neural
+          Intents:
+            # Greeting intent — maps "hello/hi" to a Bedrock session start
+            - Name: GreetingIntent
+              SampleUtterances:
+                - Utterance: hello
+                - Utterance: hi
+                - Utterance: hi there
+                - Utterance: good morning
+                - Utterance: good afternoon
+                - Utterance: hey
+              FulfillmentCodeHook:
+                Enabled: true
+            # FallbackIntent — catches everything else and routes to Bedrock Agent
+            - Name: FallbackIntent
+              ParentIntentSignature: AMAZON.FallbackIntent
+              FulfillmentCodeHook:
+                Enabled: true
+
+  # ── 8. Bot version (built from DRAFT) ─────────────────────────────────────
+  TradieLexBotVersion:
+    Type: AWS::Lex::BotVersion
+    Properties:
+      BotId: !Ref TradieLexBot
+      BotVersionLocaleSpecification:
+        - LocaleId: en_AU
+          BotVersionLocaleDetails:
+            SourceBotVersion: DRAFT
+
+  # ── 9. Bot alias with Lambda fulfillment hook ──────────────────────────────
+  TradieLexBotAlias:
+    Type: AWS::Lex::BotAlias
+    Properties:
+      BotId: !Ref TradieLexBot
+      BotAliasName: live
+      BotVersion: !GetAtt TradieLexBotVersion.BotVersion
+      BotAliasLocaleSettings:
+        - LocaleId: en_AU
+          BotAliasLocaleSetting:
+            Enabled: true
+            CodeHookSpecification:
+              LambdaCodeHook:
+                LambdaArn: !GetAtt TradieLexFulfillmentLambda.Arn
+                CodeHookInterfaceVersion: "1.0"
+
+# ── Outputs ────────────────────────────────────────────────────────────────────
+Outputs:
+
+  TradieBedrockAgentExecutionRoleArn:
+    Value: !GetAtt TradieBedrockAgentExecutionRole.Arn
+    Description: Assigned to the tradie Bedrock Agent
+    Export:
+      Name: !Sub "TradieConnect-TradieBedockRole-${Env}"
+
+  TradieLexFulfillmentLambdaArn:
+    Value: !GetAtt TradieLexFulfillmentLambda.Arn
+    Description: Tradie Lex fulfillment Lambda ARN
+    Export:
+      Name: !Sub "TradieConnect-TradieLexLambda-${Env}"
+
+  TradieLexBotId:
+    Value: !Ref TradieLexBot
+    Description: Wire this bot ID into the Connect contact flow (Get customer input block)
+    Export:
+      Name: !Sub "TradieConnect-TradieBotId-${Env}"
+
+  TradieLexBotAliasId:
+    Value: !GetAtt TradieLexBotAlias.BotAliasId
+    Description: Wire this alias ID into the Connect contact flow
+    Export:
+      Name: !Sub "TradieConnect-TradieBotAliasId-${Env}"

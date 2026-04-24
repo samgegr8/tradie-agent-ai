@@ -88,7 +88,7 @@ Resources:
   AgentActionLambdaRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "tradie-agent-action-role-${Env}"
+      RoleName: !Sub "tradie-connect-actions-role-${Env}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -134,7 +134,7 @@ Resources:
   AgentActionLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub "tradie-agent-actions-${Env}"
+      FunctionName: !Sub "tradie-connect-actions-${Env}"
       Runtime: python3.12
       Handler: handler.lambda_handler
       Role: !GetAtt AgentActionLambdaRole.Arn
@@ -161,7 +161,7 @@ Resources:
   BedrockAgentExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "tradie-bedrock-agent-role-${Env}"
+      RoleName: !Sub "tradie-connect-customer-bedrock-role-${Env}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -204,7 +204,7 @@ Resources:
   LexFulfillmentLambdaRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "tradie-lex-fulfillment-role-${Env}"
+      RoleName: !Sub "tradie-connect-customer-lex-role-${Env}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -228,7 +228,7 @@ Resources:
   LexFulfillmentLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub "tradie-lex-fulfillment-${Env}"
+      FunctionName: !Sub "tradie-connect-customer-lex-${Env}"
       Runtime: python3.12
       Handler: handler.lambda_handler
       Role: !GetAtt LexFulfillmentLambdaRole.Arn
@@ -268,16 +268,16 @@ Outputs:
     Value: !GetAtt BedrockAgentExecutionRole.Arn
     Description: Assign this role to the Bedrock Agent in the console (Bedrock → Agent → Edit → Agent resource role)
     Export:
-      Name: !Sub "TradieConnect-BedrockAgentRole-${Env}"
+      Name: !Sub "TradieConnect-CustomerBedrockRole-${Env}"
 
   AgentActionLambdaArn:
     Value: !GetAtt AgentActionLambda.Arn
-    Description: Paste this ARN into the Bedrock Agent action group Lambda field
+    Description: Shared actions Lambda ARN — used by both customer and tradie Bedrock Agents
     Export:
-      Name: !Sub "TradieConnect-AgentActionLambda-${Env}"
+      Name: !Sub "TradieConnect-ActionsLambda-${Env}"
 
   LexFulfillmentLambdaArn:
     Value: !GetAtt LexFulfillmentLambda.Arn
-    Description: Paste this ARN into the Lex V2 bot FallbackIntent fulfillment field
+    Description: Customer Lex fulfillment Lambda ARN
     Export:
-      Name: !Sub "TradieConnect-LexFulfillmentLambda-${Env}"
+      Name: !Sub "TradieConnect-CustomerLexLambda-${Env}"

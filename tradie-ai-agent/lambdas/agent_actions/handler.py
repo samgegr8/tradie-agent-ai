@@ -28,22 +28,30 @@ _orchestrator = MCPOrchestrator()
 # Maps Bedrock Agent camelCase function names → orchestrator methods
 # Parameter names are also camelCase from Bedrock; mapped to snake_case kwargs here
 _HANDLERS = {
-    "createJobCard":        _orchestrator.create_job_card,
+    # Customer-facing tools (JobManagement action group)
+    "createJobCard":         _orchestrator.create_job_card,
     "lookupAvailableTradie": _orchestrator.lookup_available_tradie,
-    "assignTradieToJob":    _orchestrator.assign_tradie_to_job,
-    "logJobNotification":   _orchestrator.log_job_notification,
+    "assignTradieToJob":     _orchestrator.assign_tradie_to_job,
+    "logJobNotification":    _orchestrator.log_job_notification,
+    # Tradie-facing tools (TradieManagement action group)
+    "lookupTradieByCode": _orchestrator.lookup_tradie_by_code,
+    "getJobsByTradie":    _orchestrator.get_jobs_by_tradie,
+    "completeJob":        _orchestrator.complete_job,
 }
 
 # Bedrock sends camelCase param names; orchestrator methods expect snake_case
 _PARAM_MAP = {
-    "customerName":      "customer_name",
-    "callbackNumber":    "callback_number",
-    "serviceType":       "service_type",
-    "problemDescription":"problem_description",
-    "preferredTime":     "preferred_time",
-    "jobId":             "job_id",
-    "tradieId":          "tradie_id",
-    "tradiePhone":       "tradie_phone",
+    "customerName":       "customer_name",
+    "callbackNumber":     "callback_number",
+    "serviceType":        "service_type",
+    "problemDescription": "problem_description",
+    "appointmentDate":    "appointment_date",
+    "appointmentTime":    "appointment_time",
+    "jobId":              "job_id",
+    "tradieId":           "tradie_id",
+    "tradiePhone":        "tradie_phone",
+    "dateFilter":  "date_filter",
+    "tradieCode":  "tradie_code",
 }
 
 
