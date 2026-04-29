@@ -1,9 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Tradie Connect — Tradie-Facing Agent Infrastructure
-  Deploys the Lex V2 bot, fulfillment Lambda, and Bedrock execution role for
-  the tradie-facing agent (code auth, job reminders, job completion).
-  The Bedrock Agent itself is created by deploy_tradie_agent.sh.
+  Fully CFN-managed: Lex V2 bot, fulfillment Lambda, Bedrock Agent,
+  Bedrock Agent Alias, and all IAM roles.
+  System prompt is read from SSM — deploy_tradie_agent.sh puts it there first.
 
 Parameters:
   Env:
@@ -19,15 +19,12 @@ Parameters:
     Type: String
     Description: ARN of the shared agent-actions Lambda (from tradie-connect-agent stack)
 
-  TradieBedrockAgentId:
-    Type: String
-    Default: ""
-    Description: Tradie Bedrock Agent ID — blank on first deploy, populated by deploy_tradie_agent.sh
-
-  TradieBedrockAgentAliasId:
-    Type: String
-    Default: ""
-    Description: Tradie Bedrock Agent Alias ID — blank on first deploy, populated by deploy_tradie_agent.sh
+  TradieAgentInstruction:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /tradie-connect/dev/tradie-agent-instruction
+    Description: >
+      SSM parameter name holding the tradie agent system prompt.
+      deploy_tradie_agent.sh stores the prompt here before deploying this template.
 
 # ── Resources ──────────────────────────────────────────────────────────────────
 Resources:
@@ -64,7 +61,122 @@ Resources:
                   - lambda:InvokeFunction
                 Resource: !Ref AgentActionLambdaArn
 
-  # ── 2. Lex fulfillment Lambda role ─────────────────────────────────────────
+  # ── 2. Bedrock Agent (fully CFN-managed) ───────────────────────────────────
+  TradieBedrockAgent:
+    Type: AWS::Bedrock::Agent
+    DependsOn: TradieBedrockAgentExecutionRole
+    Properties:
+      AgentName: !Sub "TradieConnect-TradieAgent-${Env}"
+      AgentResourceRoleArn: !GetAtt TradieBedrockAgentExecutionRole.Arn
+      FoundationModel: "au.anthropic.claude-haiku-4-5-20251001-v1:0"
+      Instruction: !Ref TradieAgentInstruction
+      AutoPrepare: true
+      IdleSessionTTLInSeconds: 600
+      ActionGroups:
+        - ActionGroupName: TradieManagement
+          Description: "Tradie code auth, job reminders, job completion, and travel log"
+          ActionGroupState: ENABLED
+          ActionGroupExecutor:
+            Lambda: !Ref AgentActionLambdaArn
+          FunctionSchema:
+            Functions:
+              - Name: lookupTradieByCode
+                Description: >
+                  Authenticates a tradie by their 6-digit tradie code.
+                  Always call this first. Returns phone_number which must be used
+                  for all subsequent tool calls.
+                Parameters:
+                  tradieCode:
+                    Type: string
+                    Required: true
+                    Description: "The 6-digit tradie code spoken by the caller e.g. 482719"
+
+              - Name: getJobsByTradie
+                Description: >
+                  Returns jobs assigned to a tradie for a given date.
+                  Use the phone_number returned by lookupTradieByCode as tradiePhone.
+                Parameters:
+                  tradiePhone:
+                    Type: string
+                    Required: true
+                    Description: "Tradie phone number from lookupTradieByCode result e.g. +61411000001"
+                  dateFilter:
+                    Type: string
+                    Required: true
+                    Description: >
+                      Date to filter by: today, tomorrow, day after tomorrow,
+                      a weekday name e.g. monday, or ISO date YYYY-MM-DD
+
+              - Name: completeJob
+                Description: >
+                  Marks a job as COMPLETED. Verifies job is assigned to the tradie.
+                  Use phone_number from lookupTradieByCode as tradiePhone.
+                Parameters:
+                  jobId:
+                    Type: string
+                    Required: true
+                    Description: "Job reference number e.g. JOB-20260424-A3F2B1"
+                  tradiePhone:
+                    Type: string
+                    Required: true
+                    Description: "Tradie phone number from lookupTradieByCode result — verifies job ownership"
+
+              - Name: startTrip
+                Description: >
+                  Records the start of a tradie trip for the logbook.
+                  Call after authentication. Returns trip_id used to end the trip later.
+                Parameters:
+                  tradiePhone:
+                    Type: string
+                    Required: true
+                    Description: "Tradie phone number from lookupTradieByCode result"
+                  tripType:
+                    Type: string
+                    Required: true
+                    Description: "Type of trip: job (to/from a job site), supplier (to a trade supplier), home, or other"
+                  destination:
+                    Type: string
+                    Required: true
+                    Description: "Where the tradie is heading — address or supplier name e.g. Bunnings Warehouse Auburn"
+                  relatedJobId:
+                    Type: string
+                    Required: false
+                    Description: "Job ID if tripType is job e.g. JOB-20260429-A3F2B1. Leave blank for other trip types."
+
+              - Name: endTrip
+                Description: >
+                  Records the end of a tradie trip and marks it completed in the logbook.
+                Parameters:
+                  tripId:
+                    Type: string
+                    Required: true
+                    Description: "Trip reference number returned by startTrip e.g. TRIP-20260429-A3F2B1"
+                  tradiePhone:
+                    Type: string
+                    Required: true
+                    Description: "Tradie phone number from lookupTradieByCode result — verifies trip ownership"
+
+              - Name: getTripLog
+                Description: >
+                  Returns all trips logged by a tradie for a given date.
+                Parameters:
+                  tradiePhone:
+                    Type: string
+                    Required: true
+                    Description: "Tradie phone number from lookupTradieByCode result"
+                  dateFilter:
+                    Type: string
+                    Required: true
+                    Description: "Date to retrieve trips for: today, yesterday, tomorrow, or ISO date YYYY-MM-DD"
+
+  # ── 3. Bedrock Agent Alias (live) ─────────────────────────────────────────
+  TradieBedrockAgentAlias:
+    Type: AWS::Bedrock::AgentAlias
+    Properties:
+      AgentId: !GetAtt TradieBedrockAgent.AgentId
+      AgentAliasName: live
+
+  # ── 4. Lex fulfillment Lambda role ─────────────────────────────────────────
   TradieLexFulfillmentLambdaRole:
     Type: AWS::IAM::Role
     Properties:
@@ -86,9 +198,12 @@ Resources:
               - Effect: Allow
                 Action:
                   - bedrock:InvokeAgent
-                Resource: !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${TradieBedrockAgentId}/${TradieBedrockAgentAliasId}"
+                Resource: !Sub
+                  - "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${AgentId}/${AliasId}"
+                  - AgentId: !GetAtt TradieBedrockAgent.AgentId
+                    AliasId: !GetAtt TradieBedrockAgentAlias.AgentAliasId
 
-  # ── 3. Lex fulfillment Lambda (same code as customer bot, different agent) ─
+  # ── 5. Lex fulfillment Lambda ─────────────────────────────────────────────
   TradieLexFulfillmentLambda:
     Type: AWS::Lambda::Function
     Properties:
@@ -103,15 +218,15 @@ Resources:
         S3Key: lambda/lex_fulfillment.zip
       Environment:
         Variables:
-          BEDROCK_AGENT_ID:       !Ref TradieBedrockAgentId
-          BEDROCK_AGENT_ALIAS_ID: !Ref TradieBedrockAgentAliasId
+          BEDROCK_AGENT_ID:       !GetAtt TradieBedrockAgent.AgentId
+          BEDROCK_AGENT_ALIAS_ID: !GetAtt TradieBedrockAgentAlias.AgentAliasId
       Tags:
         - Key: Project
           Value: TradieConnect
         - Key: Env
           Value: !Ref Env
 
-  # ── 4. Allow Lex to invoke the fulfillment Lambda ──────────────────────────
+  # ── 6. Allow Lex to invoke the fulfillment Lambda ─────────────────────────
   TradieLexFulfillmentLambdaLexPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -120,7 +235,7 @@ Resources:
       Principal: lexv2.amazonaws.com
       SourceAccount: !Ref AWS::AccountId
 
-  # ── 5. Allow the tradie Bedrock agent to invoke the shared action Lambda ───
+  # ── 7. Allow the tradie Bedrock agent to invoke the shared action Lambda ──
   TradieAgentActionLambdaBedrockPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -129,7 +244,7 @@ Resources:
       Principal: bedrock.amazonaws.com
       SourceAccount: !Ref AWS::AccountId
 
-  # ── 6. IAM role for the Lex bot (Polly TTS synthesis) ─────────────────────
+  # ── 8. IAM role for the Lex bot (Polly TTS synthesis) ────────────────────
   TradieLexBotRole:
     Type: AWS::IAM::Role
     Properties:
@@ -153,7 +268,7 @@ Resources:
                 Action: polly:SynthesizeSpeech
                 Resource: "*"
 
-  # ── 7. Lex V2 bot ──────────────────────────────────────────────────────────
+  # ── 9. Lex V2 bot ─────────────────────────────────────────────────────────
   TradieLexBot:
     Type: AWS::Lex::Bot
     Properties:
@@ -170,7 +285,6 @@ Resources:
             VoiceId: Olivia
             Engine: neural
           Intents:
-            # Greeting intent — maps "hello/hi" to a Bedrock session start
             - Name: GreetingIntent
               SampleUtterances:
                 - Utterance: hello
@@ -181,13 +295,12 @@ Resources:
                 - Utterance: hey
               FulfillmentCodeHook:
                 Enabled: true
-            # FallbackIntent — catches everything else and routes to Bedrock Agent
             - Name: FallbackIntent
               ParentIntentSignature: AMAZON.FallbackIntent
               FulfillmentCodeHook:
                 Enabled: true
 
-  # ── 8. Bot version (built from DRAFT) ─────────────────────────────────────
+  # ── 10. Bot version ────────────────────────────────────────────────────────
   TradieLexBotVersion:
     Type: AWS::Lex::BotVersion
     Properties:
@@ -197,7 +310,7 @@ Resources:
           BotVersionLocaleDetails:
             SourceBotVersion: DRAFT
 
-  # ── 9. Bot alias with Lambda fulfillment hook ──────────────────────────────
+  # ── 11. Bot alias with Lambda fulfillment hook ────────────────────────────
   TradieLexBotAlias:
     Type: AWS::Lex::BotAlias
     Properties:
@@ -215,6 +328,18 @@ Resources:
 
 # ── Outputs ────────────────────────────────────────────────────────────────────
 Outputs:
+
+  TradieBedrockAgentId:
+    Value: !GetAtt TradieBedrockAgent.AgentId
+    Description: Tradie Bedrock Agent ID
+    Export:
+      Name: !Sub "TradieConnect-TradieAgentId-${Env}"
+
+  TradieBedrockAgentAliasId:
+    Value: !GetAtt TradieBedrockAgentAlias.AgentAliasId
+    Description: Tradie Bedrock Agent Alias ID
+    Export:
+      Name: !Sub "TradieConnect-TradieAliasId-${Env}"
 
   TradieBedrockAgentExecutionRoleArn:
     Value: !GetAtt TradieBedrockAgentExecutionRole.Arn

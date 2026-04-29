@@ -1,8 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Tradie Connect — AI Agent Infrastructure
-  Adds: JobsTable, agent action Lambda, IAM role,
-  and the Connect Agent action group definition.
+  Tradie Connect — Customer Agent Infrastructure
+  Fully CFN-managed: JobsTable, TripsTable, shared actions Lambda, IAM roles,
+  AWS::Bedrock::Agent, AWS::Bedrock::AgentAlias, customer Lex bot, and Lex Lambda.
+  System prompt is read from SSM — deploy.sh puts it there first.
   Note: SMS notification (Twilio) is a future roadmap item — no SNS resources here.
 
 Parameters:
@@ -19,15 +20,12 @@ Parameters:
     Type: String
     Description: Full ARN of the Amazon Connect instance
 
-  BedrockAgentId:
-    Type: String
-    Default: ""
-    Description: Bedrock Agent ID — leave blank on first deploy, populate after creating the agent
-
-  BedrockAgentAliasId:
-    Type: String
-    Default: ""
-    Description: Bedrock Agent Alias ID — leave blank on first deploy, populate after creating the alias
+  CustomerAgentInstruction:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /tradie-connect/dev/customer-agent-instruction
+    Description: >
+      SSM parameter name holding the customer agent system prompt.
+      deploy.sh stores the prompt here before deploying this template.
 
 # ── Conditions ─────────────────────────────────────────────────────────────────
 Conditions:
@@ -57,7 +55,6 @@ Resources:
           KeyType: HASH
 
       GlobalSecondaryIndexes:
-        # Query by status (e.g. all PENDING_ASSIGNMENT jobs)
         - IndexName: StatusIndex
           KeySchema:
             - AttributeName: status
@@ -67,7 +64,6 @@ Resources:
           Projection:
             ProjectionType: ALL
 
-      # 30-day TTL (consistent with recordings / transcriptions)
       TimeToLiveSpecification:
         AttributeName: expires_at
         Enabled: true
@@ -84,7 +80,49 @@ Resources:
         - Key: Env
           Value: !Ref Env
 
-  # ── 2. Lambda execution role ──────────────────────────────────────────────────
+  # ── 2. TripsTable ────────────────────────────────────────────────────────────
+  TripsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "TripsTable-${Env}"
+      BillingMode: PAY_PER_REQUEST
+
+      AttributeDefinitions:
+        - AttributeName: trip_id
+          AttributeType: S
+        - AttributeName: tradie_phone
+          AttributeType: S
+        - AttributeName: started_at
+          AttributeType: S
+
+      KeySchema:
+        - AttributeName: trip_id
+          KeyType: HASH
+
+      GlobalSecondaryIndexes:
+        - IndexName: TradiePhoneIndex
+          KeySchema:
+            - AttributeName: tradie_phone
+              KeyType: HASH
+            - AttributeName: started_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+      SSESpecification:
+        SSEEnabled: true
+
+      Tags:
+        - Key: Project
+          Value: TradieConnect
+        - Key: Env
+          Value: !Ref Env
+
+  # ── 3. Lambda execution role ─────────────────────────────────────────────────
   AgentActionLambdaRole:
     Type: AWS::IAM::Role
     Properties:
@@ -130,7 +168,19 @@ Resources:
                   # Note: SNS permissions intentionally omitted.
                   # Twilio SMS integration is a future roadmap item.
 
-  # ── 3. Agent action Lambda ────────────────────────────────────────────────────
+              # DynamoDB — TripsTable (read + write)
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt TripsTable.Arn
+                  - !Sub "${TripsTable.Arn}/index/*"
+
+  # ── 4. Agent action Lambda ───────────────────────────────────────────────────
   AgentActionLambda:
     Type: AWS::Lambda::Function
     Properties:
@@ -149,6 +199,7 @@ Resources:
         Variables:
           JOBS_TABLE:    !Ref JobsTable
           TRADIES_TABLE: !Sub "TradiesTable-${Env}"
+          TRIPS_TABLE:   !Ref TripsTable
           ENV:           !Ref Env
 
       Tags:
@@ -157,7 +208,7 @@ Resources:
         - Key: Env
           Value: !Ref Env
 
-  # ── 4. Bedrock Agent execution role ──────────────────────────────────────
+  # ── 5. Bedrock Agent execution role ─────────────────────────────────────────
   BedrockAgentExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -177,7 +228,6 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              # Invoke Claude via foundation models and inference profiles
               - Effect: Allow
                 Action:
                   - bedrock:InvokeModel
@@ -185,13 +235,12 @@ Resources:
                   - bedrock:GetInferenceProfile
                   - bedrock:ListInferenceProfiles
                 Resource: "*"
-              # Invoke the action group Lambda
               - Effect: Allow
                 Action:
                   - lambda:InvokeFunction
                 Resource: !GetAtt AgentActionLambda.Arn
 
-  # ── 5. Allow Amazon Bedrock Agents to invoke the action Lambda ───────────
+  # ── 6. Allow Bedrock to invoke the action Lambda ─────────────────────────────
   AgentActionLambdaBedrockPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -200,7 +249,186 @@ Resources:
       Principal: bedrock.amazonaws.com
       SourceAccount: !Ref AWS::AccountId
 
-  # ── 6. Lex fulfillment Lambda role ────────────────────────────────────────
+  # ── 7. Customer Bedrock Agent (fully CFN-managed) ───────────────────────────
+  CustomerBedrockAgent:
+    Type: AWS::Bedrock::Agent
+    DependsOn: BedrockAgentExecutionRole
+    Properties:
+      AgentName: !Sub "TradieConnect-CustomerAgent-${Env}"
+      AgentResourceRoleArn: !GetAtt BedrockAgentExecutionRole.Arn
+      FoundationModel: "au.anthropic.claude-haiku-4-5-20251001-v1:0"
+      Instruction: !Ref CustomerAgentInstruction
+      AutoPrepare: true
+      IdleSessionTTLInSeconds: 600
+      ActionGroups:
+        - ActionGroupName: JobManagement
+          Description: "Job card creation, tradie lookup, assignment, and notification logging"
+          ActionGroupState: ENABLED
+          ActionGroupExecutor:
+            Lambda: !GetAtt AgentActionLambda.Arn
+          FunctionSchema:
+            Functions:
+              - Name: createJobCard
+                Description: >
+                  Creates a new job card in DynamoDB with customer and job details.
+                  Always call this first. problemDescription is pipe-delimited:
+                  description|YYYY-MM-DD|time slot|urgency
+                Parameters:
+                  customerName:
+                    Type: string
+                    Required: true
+                    Description: "Full name of the customer calling in."
+                  callbackNumber:
+                    Type: string
+                    Required: true
+                    Description: "Customer phone number for callback."
+                  serviceType:
+                    Type: string
+                    Required: true
+                    Description: "Type of trade required e.g. plumber, electrician, carpenter."
+                  address:
+                    Type: string
+                    Required: true
+                    Description: "Full street address including suburb, state and postcode."
+                  problemDescription:
+                    Type: string
+                    Required: true
+                    Description: >
+                      Pipe-delimited: problem description|YYYY-MM-DD appointment date|time slot|urgency.
+                      e.g. Leaking tap under kitchen sink|2026-04-25|morning|standard
+
+              - Name: lookupAvailableTradie
+                Description: >
+                  Finds an available tradie matching the service type and suburb.
+                  Call this after createJobCard.
+                Parameters:
+                  serviceType:
+                    Type: string
+                    Required: true
+                    Description: "Trade type to match, must match what was passed to createJobCard."
+                  suburb:
+                    Type: string
+                    Required: false
+                    Description: "Suburb from the customer address, used to prefer a nearby tradie."
+
+              - Name: assignTradieToJob
+                Description: >
+                  Assigns the matched tradie to the job card.
+                  Call this after lookupAvailableTradie.
+                Parameters:
+                  jobId:
+                    Type: string
+                    Required: true
+                    Description: "Job ID returned by createJobCard."
+                  tradieId:
+                    Type: string
+                    Required: true
+                    Description: "Tradie ID returned by lookupAvailableTradie."
+
+              - Name: logJobNotification
+                Description: >
+                  Logs the notification intent for the assigned tradie.
+                  Call this last, after assignTradieToJob.
+                Parameters:
+                  jobId:
+                    Type: string
+                    Required: true
+                    Description: "Job ID of the assigned job."
+                  tradiePhone:
+                    Type: string
+                    Required: true
+                    Description: "Phone number of the assigned tradie."
+
+  # ── 8. Customer Bedrock Agent Alias (live) ───────────────────────────────────
+  CustomerBedrockAgentAlias:
+    Type: AWS::Bedrock::AgentAlias
+    Properties:
+      AgentId: !GetAtt CustomerBedrockAgent.AgentId
+      AgentAliasName: live
+
+  # ── 9. IAM role for the customer Lex bot (Polly TTS) ────────────────────────
+  CustomerLexBotRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "tradie-connect-customer-lex-bot-role-${Env}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lexv2.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: CustomerLexBotPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: polly:SynthesizeSpeech
+                Resource: "*"
+
+  # ── 10. Customer Lex V2 bot (CFN-managed, replaces manual TradieConnectBot) ──
+  CustomerLexBot:
+    Type: AWS::Lex::Bot
+    Properties:
+      Name: !Sub "TradieConnect-CustomerBot-${Env}"
+      RoleArn: !GetAtt CustomerLexBotRole.Arn
+      DataPrivacy:
+        ChildDirected: false
+      IdleSessionTTLInSeconds: 300
+      AutoBuildBotLocales: true
+      BotLocales:
+        - LocaleId: en_AU
+          NluConfidenceThreshold: 0.40
+          VoiceSettings:
+            VoiceId: Olivia
+            Engine: neural
+          Intents:
+            - Name: GreetingIntent
+              SampleUtterances:
+                - Utterance: hello
+                - Utterance: hi
+                - Utterance: hi there
+                - Utterance: good morning
+                - Utterance: good afternoon
+                - Utterance: hey
+              FulfillmentCodeHook:
+                Enabled: true
+            - Name: FallbackIntent
+              ParentIntentSignature: AMAZON.FallbackIntent
+              FulfillmentCodeHook:
+                Enabled: true
+
+  # ── 11. Customer Lex bot version ─────────────────────────────────────────────
+  CustomerLexBotVersion:
+    Type: AWS::Lex::BotVersion
+    Properties:
+      BotId: !Ref CustomerLexBot
+      BotVersionLocaleSpecification:
+        - LocaleId: en_AU
+          BotVersionLocaleDetails:
+            SourceBotVersion: DRAFT
+
+  # ── 12. Customer Lex bot alias with Lambda fulfillment hook ─────────────────
+  CustomerLexBotAlias:
+    Type: AWS::Lex::BotAlias
+    Properties:
+      BotId: !Ref CustomerLexBot
+      BotAliasName: live
+      BotVersion: !GetAtt CustomerLexBotVersion.BotVersion
+      BotAliasLocaleSettings:
+        - LocaleId: en_AU
+          BotAliasLocaleSetting:
+            Enabled: true
+            CodeHookSpecification:
+              LambdaCodeHook:
+                LambdaArn: !GetAtt LexFulfillmentLambda.Arn
+                CodeHookInterfaceVersion: "1.0"
+
+  # ── 13. Lex fulfillment Lambda role ─────────────────────────────────────────
   LexFulfillmentLambdaRole:
     Type: AWS::IAM::Role
     Properties:
@@ -222,9 +450,12 @@ Resources:
               - Effect: Allow
                 Action:
                   - bedrock:InvokeAgent
-                Resource: !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${BedrockAgentId}/${BedrockAgentAliasId}"
+                Resource: !Sub
+                  - "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${AgentId}/${AliasId}"
+                  - AgentId: !GetAtt CustomerBedrockAgent.AgentId
+                    AliasId: !GetAtt CustomerBedrockAgentAlias.AgentAliasId
 
-  # ── 6. Lex fulfillment Lambda ─────────────────────────────────────────────
+  # ── 14. Customer Lex fulfillment Lambda ──────────────────────────────────────
   LexFulfillmentLambda:
     Type: AWS::Lambda::Function
     Properties:
@@ -239,15 +470,15 @@ Resources:
         S3Key: lambda/lex_fulfillment.zip
       Environment:
         Variables:
-          BEDROCK_AGENT_ID:       !Ref BedrockAgentId
-          BEDROCK_AGENT_ALIAS_ID: !Ref BedrockAgentAliasId
+          BEDROCK_AGENT_ID:       !GetAtt CustomerBedrockAgent.AgentId
+          BEDROCK_AGENT_ALIAS_ID: !GetAtt CustomerBedrockAgentAlias.AgentAliasId
       Tags:
         - Key: Project
           Value: TradieConnect
         - Key: Env
           Value: !Ref Env
 
-  # ── 7. Allow Lex to invoke the fulfillment Lambda ─────────────────────────
+  # ── 15. Allow Lex to invoke the customer fulfillment Lambda ─────────────────
   LexFulfillmentLambdaLexPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -264,17 +495,45 @@ Outputs:
     Export:
       Name: !Sub "TradieConnect-JobsTable-${Env}"
 
-  BedrockAgentExecutionRoleArn:
-    Value: !GetAtt BedrockAgentExecutionRole.Arn
-    Description: Assign this role to the Bedrock Agent in the console (Bedrock → Agent → Edit → Agent resource role)
+  TripsTableName:
+    Value: !Ref TripsTable
     Export:
-      Name: !Sub "TradieConnect-CustomerBedrockRole-${Env}"
+      Name: !Sub "TradieConnect-TripsTable-${Env}"
 
   AgentActionLambdaArn:
     Value: !GetAtt AgentActionLambda.Arn
     Description: Shared actions Lambda ARN — used by both customer and tradie Bedrock Agents
     Export:
       Name: !Sub "TradieConnect-ActionsLambda-${Env}"
+
+  CustomerBedrockAgentId:
+    Value: !GetAtt CustomerBedrockAgent.AgentId
+    Description: Customer Bedrock Agent ID
+    Export:
+      Name: !Sub "TradieConnect-CustomerAgentId-${Env}"
+
+  CustomerBedrockAgentAliasId:
+    Value: !GetAtt CustomerBedrockAgentAlias.AgentAliasId
+    Description: Customer Bedrock Agent Alias ID
+    Export:
+      Name: !Sub "TradieConnect-CustomerAliasId-${Env}"
+
+  BedrockAgentExecutionRoleArn:
+    Value: !GetAtt BedrockAgentExecutionRole.Arn
+    Export:
+      Name: !Sub "TradieConnect-CustomerBedrockRole-${Env}"
+
+  CustomerLexBotId:
+    Value: !Ref CustomerLexBot
+    Description: Wire this bot ID into the Connect customer contact flow
+    Export:
+      Name: !Sub "TradieConnect-CustomerBotId-${Env}"
+
+  CustomerLexBotAliasId:
+    Value: !GetAtt CustomerLexBotAlias.BotAliasId
+    Description: Wire this alias ID into the Connect customer contact flow
+    Export:
+      Name: !Sub "TradieConnect-CustomerBotAliasId-${Env}"
 
   LexFulfillmentLambdaArn:
     Value: !GetAtt LexFulfillmentLambda.Arn

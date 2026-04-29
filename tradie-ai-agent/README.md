@@ -1,6 +1,6 @@
 # Tradie Connect — AI Agent
 
-An Amazon Connect AI system with two conversational agents: one for **customers** booking jobs, one for **tradies** checking schedules and marking jobs complete. Built on Amazon Bedrock Agents + AWS Lambda + Lex V2.
+An Amazon Connect AI system with two conversational agents: one for **customers** booking jobs, one for **tradies** checking schedules, marking jobs complete, and logging trips. Built on Amazon Bedrock Agents + AWS Lambda + Lex V2.
 
 ---
 
@@ -43,14 +43,17 @@ Bedrock Agent (TradieConnect-TradieAgent-dev)
 Lambda (agent_actions — shared with customer flow)
       ├── 1. lookupTradieByCode       → authenticates via 6-digit tradie code
       ├── 2. getJobsByTradie          → returns jobs by appointment date
-      └── 3. completeJob             → marks job COMPLETED (verifies ownership)
+      ├── 3. completeJob             → marks job COMPLETED (verifies ownership)
+      ├── 4. startTrip               → creates trip entry in TripsTable (type: job|supplier|home|other)
+      ├── 5. endTrip                 → marks trip COMPLETED (verifies ownership)
+      └── 6. getTripLog              → returns trips by date for the logbook
 ```
 
 ### Tradie portal
 
 ```
-Tradie opens portal URL → enters 6-digit tradie code → sees today's / all assigned jobs
-Portal API (Lambda) → DynamoDB scan by tradie_code → tradie.phone → JobsTable
+Tradie opens portal URL → enters 6-digit tradie code → sees assigned jobs + trip log
+Portal API (Lambda) → DynamoDB scan by tradie_code → tradie.phone → JobsTable / TripsTable
 ```
 
 ---
@@ -155,6 +158,9 @@ Tools run in order 1 → 2 → 3 → 4. The `job_id` from tool 1 is required by 
 | 1 | `lookupTradieByCode` | Authenticates tradie by 6-digit code, returns `phone_number` |
 | 2 | `getJobsByTradie` | Returns jobs by `appointment_date` for "today", "tomorrow", or ISO date |
 | 3 | `completeJob` | Marks job `COMPLETED`, verifies tradie ownership |
+| 4 | `startTrip` | Creates trip entry in `TripsTable` (`job`\|`supplier`\|`home`\|`other`); returns `trip_id` |
+| 5 | `endTrip` | Marks trip `COMPLETED`, verifies tradie ownership |
+| 6 | `getTripLog` | Returns trips for a tradie on a given date, filtered by `started_at` |
 
 ---
 
@@ -186,7 +192,9 @@ python scripts/manage_tradies.py list --env dev   # shows CODE column
 
 ## Tradie portal
 
-Static website hosted on S3. Tradies log in with their 6-digit code and see all assigned jobs including appointment date, time, customer details, address, and job description.
+Static website hosted on S3. Tradies log in with their 6-digit code and see:
+- **My Jobs tab** — all assigned jobs including appointment date, time, customer details, address, and job description
+- **Trip Log tab** — all recorded trips with destination, type, start/end time, and related job ID; filterable by date
 
 Portal URL (dev): `http://tradie-portal-dev-{account}.s3-website-ap-southeast-2.amazonaws.com`
 
@@ -221,7 +229,7 @@ python scripts/manage_tradies.py show-code --env dev +61411000001
 | Lambda — portal API | `tradie-portal-api-{env}` |
 | Lex bot — customer | `TradieConnectBot-{env}` (pre-existing, manual) |
 | Lex bot — tradie | `TradieConnect-TradieBot-{env}` (CFN-managed) |
-| DynamoDB | `JobsTable-{env}`, `TradiesTable-{env}` |
+| DynamoDB | `JobsTable-{env}`, `TradiesTable-{env}`, `TripsTable-{env}` |
 
 ---
 
@@ -235,6 +243,7 @@ python scripts/manage_tradies.py show-code --env dev +61411000001
 | AWS Lambda (Python 3.12) | Tool actions + Lex fulfillment + portal API |
 | DynamoDB `JobsTable-{env}` | Job cards (PK: `job_id`) |
 | DynamoDB `TradiesTable-{env}` | Tradie roster (PK: `phone_number`) |
+| DynamoDB `TripsTable-{env}` | Travel log entries (PK: `trip_id`) |
 | S3 | Recordings, transcripts, portal website |
 | API Gateway HTTP API | Portal REST API |
 | CloudFormation | All infrastructure as code |
@@ -255,10 +264,39 @@ python scripts/manage_tradies.py show-code --env dev +61411000001
 
 ---
 
+## Travel log
+
+A tradie can call in to start or end a trip at any point during the day. The agent guides them through:
+
+1. **Start a trip** — tradie says where they're heading; agent asks for trip type (job / supplier / home / other) and optionally the related job ID, then calls `startTrip` and reads back the trip reference.
+2. **End a trip** — tradie gives the trip reference; agent calls `endTrip` and confirms.
+3. **Check the log** — tradie asks for their trips on a given day; agent calls `getTripLog` and reads each entry.
+
+### TripsTable schema
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `trip_id` | String (PK) | `TRIP-YYYYMMDD-XXXXXX` |
+| `tradie_phone` | String | FK to TradiesTable |
+| `trip_type` | String | `job` \| `supplier` \| `home` \| `other` |
+| `destination` | String | Free text — address or supplier name |
+| `related_job_id` | String | Optional — populated when `trip_type=job` |
+| `started_at` | String | ISO 8601 timestamp |
+| `ended_at` | String \| null | ISO 8601 timestamp; null until ended |
+| `status` | String | `IN_PROGRESS` \| `COMPLETED` |
+| `expires_at` | Number | Unix epoch TTL (30 days) |
+
+GSI `TradiePhoneIndex` (PK: `tradie_phone`, SK: `started_at`) supports portal date-range queries.
+
+The portal **Trip Log tab** shows the same data with a date picker to filter by day.
+
+---
+
 ## Roadmap
 
 - **Twilio SMS notification** — integration point: `orchestrator.py:log_job_notification()`. Job cards already track `notification.status=PENDING`. A future EventBridge rule or DynamoDB Stream can dispatch via Twilio without changing the agent or contact flow.
 - **OTP portal login** — replace 6-digit tradie code with Twilio OTP when SMS is integrated.
+- **Distance/odometer capture** — extend `startTrip`/`endTrip` with odometer readings for ATO-compliant logbooks.
 
 ---
 

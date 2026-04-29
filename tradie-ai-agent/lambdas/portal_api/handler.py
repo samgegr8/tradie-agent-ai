@@ -26,6 +26,7 @@ logger.setLevel(logging.INFO)
 dynamodb      = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", "ap-southeast-2"))
 TRADIES_TABLE = os.environ.get("TRADIES_TABLE", "TradiesTable-dev")
 JOBS_TABLE    = os.environ.get("JOBS_TABLE",    "JobsTable-dev")
+TRIPS_TABLE   = os.environ.get("TRIPS_TABLE",   "TripsTable-dev")
 
 
 def lambda_handler(event, context):
@@ -36,6 +37,8 @@ def lambda_handler(event, context):
         return _handle_login(event)
     if route == "GET /jobs":
         return _handle_jobs(event)
+    if route == "GET /trips":
+        return _handle_trips(event)
     return _respond(404, {"error": "Not found"})
 
 
@@ -98,6 +101,44 @@ def _handle_jobs(event):
     logger.info("Portal jobs: %d jobs for tradie_code=%s", len(jobs), tradie_code)
 
     return _respond(200, {"jobs": jobs})
+
+
+# ── GET /trips ─────────────────────────────────────────────────────────────────
+
+def _handle_trips(event):
+    params      = event.get("queryStringParameters") or {}
+    tradie_code = (params.get("tradie_code") or "").strip()
+    date_filter = (params.get("date") or "").strip()
+
+    if not tradie_code:
+        return _respond(400, {"error": "tradie_code query param is required"})
+
+    tradies_table = dynamodb.Table(TRADIES_TABLE)
+    tradie_result = tradies_table.scan(FilterExpression=Attr("tradie_code").eq(tradie_code))
+    tradies       = tradie_result.get("Items", [])
+    if not tradies:
+        return _respond(404, {"error": "Tradie not found."})
+    phone = tradies[0]["phone_number"]
+
+    table = dynamodb.Table(TRIPS_TABLE)
+
+    if date_filter:
+        date_prefix = date_filter[:10]
+        result = table.scan(
+            FilterExpression=(
+                Attr("tradie_phone").eq(phone)
+                & Attr("started_at").begins_with(date_prefix)
+            )
+        )
+    else:
+        result = table.scan(FilterExpression=Attr("tradie_phone").eq(phone))
+
+    trips = result.get("Items", [])
+    trips.sort(key=lambda t: t.get("started_at", ""), reverse=True)
+
+    logger.info("Portal trips: %d trips for tradie_code=%s", len(trips), tradie_code)
+
+    return _respond(200, {"trips": trips})
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────

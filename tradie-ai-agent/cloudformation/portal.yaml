@@ -80,6 +80,14 @@ Resources:
                 Resource:
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/JobsTable-${Env}"
                   - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/JobsTable-${Env}/index/*"
+              # TripsTable — read only (trip log)
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/TripsTable-${Env}"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/TripsTable-${Env}/index/*"
 
   # ── 3. Portal API Lambda ───────────────────────────────────────────────────────
   PortalApiLambda:
@@ -98,6 +106,7 @@ Resources:
         Variables:
           TRADIES_TABLE: !Sub "TradiesTable-${Env}"
           JOBS_TABLE:    !Sub "JobsTable-${Env}"
+          TRIPS_TABLE:   !Sub "TripsTable-${Env}"
           ENV:           !Ref Env
       Tags:
         - Key: Project
@@ -139,6 +148,13 @@ Resources:
     Properties:
       ApiId:    !Ref PortalHttpApi
       RouteKey: "GET /jobs"
+      Target:   !Sub "integrations/${PortalApiIntegration}"
+
+  PortalTripsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:    !Ref PortalHttpApi
+      RouteKey: "GET /trips"
       Target:   !Sub "integrations/${PortalApiIntegration}"
 
   PortalApiStage:

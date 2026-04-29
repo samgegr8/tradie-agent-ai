@@ -37,6 +37,10 @@ _HANDLERS = {
     "lookupTradieByCode": _orchestrator.lookup_tradie_by_code,
     "getJobsByTradie":    _orchestrator.get_jobs_by_tradie,
     "completeJob":        _orchestrator.complete_job,
+    # Travel log tools (TradieManagement action group)
+    "startTrip":   _orchestrator.start_trip,
+    "endTrip":     _orchestrator.end_trip,
+    "getTripLog":  _orchestrator.get_trip_log,
 }
 
 # Bedrock sends camelCase param names; orchestrator methods expect snake_case
@@ -51,7 +55,11 @@ _PARAM_MAP = {
     "tradieId":           "tradie_id",
     "tradiePhone":        "tradie_phone",
     "dateFilter":  "date_filter",
-    "tradieCode":  "tradie_code",
+    "tradieCode":   "tradie_code",
+    "tripId":       "trip_id",
+    "tripType":     "trip_type",
+    "destination":  "destination",
+    "relatedJobId": "related_job_id",
 }
 
 

@@ -29,6 +29,7 @@ dynamodb = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", "
 
 JOBS_TABLE    = os.environ.get("JOBS_TABLE",    "JobsTable-dev")
 TRADIES_TABLE = os.environ.get("TRADIES_TABLE", "TradiesTable-dev")
+TRIPS_TABLE   = os.environ.get("TRIPS_TABLE",   "TripsTable-dev")
 
 
 class MCPOrchestrator:
@@ -360,6 +361,171 @@ class MCPOrchestrator:
             "completed_at":   completed_at,
             "customer_name":  (job.get("customer") or {}).get("name", ""),
             "message":        f"Job {job_id} has been marked as completed.",
+        }
+
+    # ── Tool 7: start_trip ────────────────────────────────────────────────────
+    def start_trip(
+        self,
+        tradie_phone: str,
+        trip_type: str,
+        destination: str,
+        related_job_id: str = "",
+    ) -> dict:
+        """
+        Records the start of a trip in TripsTable.
+        trip_type must be one of: job, supplier, home, other.
+        Returns trip_id — pass this to end_trip when the trip is done.
+        """
+        from datetime import timedelta
+
+        valid_types = {"job", "supplier", "home", "other"}
+        clean_type  = trip_type.lower().strip()
+        if clean_type not in valid_types:
+            clean_type = "other"
+
+        trip_id    = f"TRIP-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+        started_at = datetime.now(timezone.utc).isoformat()
+        expires_at = int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp())
+
+        item = {
+            "trip_id":      trip_id,
+            "tradie_phone": tradie_phone,
+            "trip_type":    clean_type,
+            "destination":  destination.strip(),
+            "started_at":   started_at,
+            "ended_at":     None,
+            "status":       "IN_PROGRESS",
+            "expires_at":   expires_at,
+        }
+
+        if related_job_id and related_job_id.strip():
+            item["related_job_id"] = related_job_id.strip()
+
+        dynamodb.Table(TRIPS_TABLE).put_item(Item=item)
+
+        logger.info("Started trip %s for %s → %s (%s)", trip_id, tradie_phone, destination, clean_type)
+
+        return {
+            "trip_id":    trip_id,
+            "started_at": started_at,
+            "trip_type":  clean_type,
+            "destination": destination.strip(),
+            "message":    f"Trip to {destination.strip()} started. Reference: {trip_id}",
+        }
+
+    # ── Tool 8: end_trip ──────────────────────────────────────────────────────
+    def end_trip(self, trip_id: str, tradie_phone: str) -> dict:
+        """
+        Marks a trip COMPLETED. Verifies tradie_phone matches the trip owner
+        to prevent one tradie ending another's trip.
+        """
+        table  = dynamodb.Table(TRIPS_TABLE)
+        result = table.get_item(Key={"trip_id": trip_id})
+        trip   = result.get("Item")
+
+        if not trip:
+            return {"success": False, "message": f"Trip {trip_id} not found."}
+
+        if trip.get("tradie_phone") != tradie_phone:
+            logger.warning(
+                "end_trip: tradie %s tried to end trip %s owned by %s",
+                tradie_phone, trip_id, trip.get("tradie_phone"),
+            )
+            return {"success": False, "message": f"Trip {trip_id} is not registered to your number."}
+
+        if trip.get("status") == "COMPLETED":
+            return {"success": False, "message": f"Trip {trip_id} is already completed."}
+
+        ended_at = datetime.now(timezone.utc).isoformat()
+
+        table.update_item(
+            Key={"trip_id": trip_id},
+            UpdateExpression="SET #status = :status, ended_at = :ended_at",
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues={
+                ":status":   "COMPLETED",
+                ":ended_at": ended_at,
+            },
+        )
+
+        logger.info("Trip %s ended by tradie %s", trip_id, tradie_phone)
+
+        return {
+            "success":     True,
+            "trip_id":     trip_id,
+            "destination": trip.get("destination", ""),
+            "started_at":  trip.get("started_at", ""),
+            "ended_at":    ended_at,
+            "message":     f"Trip to {trip.get('destination', '')} logged as complete.",
+        }
+
+    # ── Tool 9: get_trip_log ──────────────────────────────────────────────────
+    def get_trip_log(self, tradie_phone: str, date_filter: str = "today") -> dict:
+        """
+        Returns trips for a tradie on a given date.
+        date_filter: "today", "yesterday", or ISO date "YYYY-MM-DD".
+        Filters by started_at date prefix.
+        """
+        from datetime import timedelta
+
+        today  = datetime.now(timezone.utc).date()
+        phrase = date_filter.strip().lower()
+
+        if phrase in ("today", "this day"):
+            target_date = today
+        elif phrase == "yesterday":
+            target_date = today - timedelta(days=1)
+        elif phrase == "tomorrow":
+            target_date = today + timedelta(days=1)
+        else:
+            try:
+                target_date = datetime.strptime(date_filter[:10], "%Y-%m-%d").date()
+            except ValueError:
+                logger.warning("get_trip_log: unrecognised date_filter '%s', defaulting to today", date_filter)
+                target_date = today
+
+        date_str = target_date.isoformat()
+
+        table  = dynamodb.Table(TRIPS_TABLE)
+        result = table.scan(
+            FilterExpression=(
+                Attr("tradie_phone").eq(tradie_phone)
+                & Attr("started_at").begins_with(date_str)
+            )
+        )
+
+        trips = sorted(result.get("Items", []), key=lambda t: t.get("started_at", ""))
+
+        logger.info("get_trip_log: %d trips for %s on %s", len(trips), tradie_phone, date_str)
+
+        if not trips:
+            return {
+                "trips_found": False,
+                "date":        date_str,
+                "count":       0,
+                "trips":       [],
+                "message":     f"No trips logged for {date_str}.",
+            }
+
+        summaries = [
+            {
+                "trip_id":        t["trip_id"],
+                "trip_type":      t.get("trip_type", ""),
+                "destination":    t.get("destination", ""),
+                "related_job_id": t.get("related_job_id", ""),
+                "started_at":     t.get("started_at", ""),
+                "ended_at":       t.get("ended_at") or "in progress",
+                "status":         t.get("status", ""),
+            }
+            for t in trips
+        ]
+
+        return {
+            "trips_found": True,
+            "date":        date_str,
+            "count":       len(trips),
+            "trips":       summaries,
+            "message":     f"Found {len(trips)} trip(s) for {date_str}.",
         }
 
     # ── Tool 4 (stub): log_job_notification ───────────────────────────────────
