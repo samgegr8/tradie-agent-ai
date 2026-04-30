@@ -379,9 +379,53 @@ class MCPOrchestrator:
         from datetime import timedelta
 
         valid_types = {"job", "supplier", "home", "other"}
-        clean_type  = trip_type.lower().strip()
+        clean_type  = (trip_type or "").lower().strip()
         if clean_type not in valid_types:
             clean_type = "other"
+
+        clean_dest = (destination or "").strip()
+
+        # ── Destination validation ────────────────────────────────────────────
+        if not clean_dest:
+            return {
+                "success": False,
+                "message": (
+                    "Destination is required before the trip can be logged. "
+                    "Please ask the tradie for the full job site address including street and suburb."
+                    if clean_type == "job" else
+                    "Destination is required before the trip can be logged. "
+                    "Please ask the tradie for the supplier name and location, e.g. Bunnings Auburn."
+                    if clean_type == "supplier" else
+                    "Destination is required before the trip can be logged. "
+                    "Please ask the tradie where they are heading."
+                ),
+            }
+
+        # Job trips must have a real address, not just a generic phrase
+        _VAGUE_JOB = {
+            "job", "a job", "the job", "my job", "work", "work site", "worksite",
+            "job site", "the site", "site", "there", "a work site",
+        }
+        if clean_type == "job" and clean_dest.lower() in _VAGUE_JOB:
+            return {
+                "success": False,
+                "message": (
+                    f"'{clean_dest}' is not a specific enough destination for a job trip. "
+                    "Please ask the tradie for the full job site address, "
+                    "including street number, street name, and suburb."
+                ),
+            }
+
+        # Supplier trips must include a location (at least 2 words: store name + suburb)
+        if clean_type == "supplier" and len(clean_dest.split()) < 2:
+            return {
+                "success": False,
+                "message": (
+                    f"'{clean_dest}' is missing the location. "
+                    f"Please ask the tradie which {clean_dest} location they are heading to — "
+                    f"for example, '{clean_dest} Auburn' or '{clean_dest} Parramatta'."
+                ),
+            }
 
         trip_id    = f"TRIP-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
         started_at = datetime.now(timezone.utc).isoformat()
