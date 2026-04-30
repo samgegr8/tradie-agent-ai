@@ -1,8 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Tradie Connect — Customer Agent Infrastructure
-  Fully CFN-managed: JobsTable, TripsTable, shared actions Lambda, IAM roles,
-  AWS::Bedrock::Agent, AWS::Bedrock::AgentAlias, customer Lex bot, and Lex Lambda.
+  CFN manages: JobsTable, TripsTable, shared actions Lambda, IAM roles,
+  AWS::Bedrock::Agent, customer Lex bot, and Lex Lambda.
+  Bedrock Agent Alias is managed by deploy.sh (not CFN) to avoid alias
+  replacement churn caused by agent re-preparation.
   System prompt is read from SSM — deploy.sh puts it there first.
   Note: SMS notification (Twilio) is a future roadmap item — no SNS resources here.
 
@@ -258,7 +260,7 @@ Resources:
       AgentResourceRoleArn: !GetAtt BedrockAgentExecutionRole.Arn
       FoundationModel: "au.anthropic.claude-haiku-4-5-20251001-v1:0"
       Instruction: !Ref CustomerAgentInstruction
-      AutoPrepare: true
+      AutoPrepare: false
       IdleSessionTTLInSeconds: 600
       ActionGroups:
         - ActionGroupName: JobManagement
@@ -338,13 +340,6 @@ Resources:
                     Type: string
                     Required: true
                     Description: "Phone number of the assigned tradie."
-
-  # ── 8. Customer Bedrock Agent Alias (live) ───────────────────────────────────
-  CustomerBedrockAgentAlias:
-    Type: AWS::Bedrock::AgentAlias
-    Properties:
-      AgentId: !GetAtt CustomerBedrockAgent.AgentId
-      AgentAliasName: live
 
   # ── 9. IAM role for the customer Lex bot (Polly TTS) ────────────────────────
   CustomerLexBotRole:
@@ -429,6 +424,9 @@ Resources:
                 CodeHookInterfaceVersion: "1.0"
 
   # ── 13. Lex fulfillment Lambda role ─────────────────────────────────────────
+  # IAM policy allows bedrock:InvokeAgent on any alias of the customer agent.
+  # The specific alias ARN is kept current by deploy.sh via
+  # aws iam put-role-policy after each prepare-agent + alias sync.
   LexFulfillmentLambdaRole:
     Type: AWS::IAM::Role
     Properties:
@@ -451,11 +449,12 @@ Resources:
                 Action:
                   - bedrock:InvokeAgent
                 Resource: !Sub
-                  - "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${AgentId}/${AliasId}"
+                  - "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${AgentId}/*"
                   - AgentId: !GetAtt CustomerBedrockAgent.AgentId
-                    AliasId: !GetAtt CustomerBedrockAgentAlias.AgentAliasId
 
   # ── 14. Customer Lex fulfillment Lambda ──────────────────────────────────────
+  # BEDROCK_AGENT_ALIAS_ID is set to a placeholder here; deploy.sh overwrites it
+  # with the real alias ID after prepare-agent + alias sync.
   LexFulfillmentLambda:
     Type: AWS::Lambda::Function
     Properties:
@@ -471,7 +470,7 @@ Resources:
       Environment:
         Variables:
           BEDROCK_AGENT_ID:       !GetAtt CustomerBedrockAgent.AgentId
-          BEDROCK_AGENT_ALIAS_ID: !GetAtt CustomerBedrockAgentAlias.AgentAliasId
+          BEDROCK_AGENT_ALIAS_ID: "PENDING"
       Tags:
         - Key: Project
           Value: TradieConnect
@@ -511,12 +510,6 @@ Outputs:
     Description: Customer Bedrock Agent ID
     Export:
       Name: !Sub "TradieConnect-CustomerAgentId-${Env}"
-
-  CustomerBedrockAgentAliasId:
-    Value: !GetAtt CustomerBedrockAgentAlias.AgentAliasId
-    Description: Customer Bedrock Agent Alias ID
-    Export:
-      Name: !Sub "TradieConnect-CustomerAliasId-${Env}"
 
   BedrockAgentExecutionRoleArn:
     Value: !GetAtt BedrockAgentExecutionRole.Arn

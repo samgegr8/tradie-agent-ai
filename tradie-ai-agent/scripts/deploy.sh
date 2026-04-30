@@ -171,18 +171,46 @@ aws lambda update-function-code \
 aws lambda wait function-updated --function-name "tradie-connect-customer-lex-${ENV}" --region "$REGION"
 log "  Lambda code updated."
 
-# ── Step 3b: Sync customer Lex Lambda with current alias (guards against CFN alias churn) ─
-# AutoPrepare=true can cause Bedrock to replace the AgentAlias resource, generating
-# a new alias ID. This step reads the authoritative ID from the stack outputs and
-# force-syncs the Lambda env vars and IAM inline policy so they always match.
-log "  Syncing customer Lex Lambda env vars and IAM policy with current agent alias ..."
+# ── Step 3b: Prepare agent + sync customer Lex Lambda to actual alias ─────────
+# AutoPrepare is disabled in CFN to prevent alias replacement on every deploy.
+# We prepare the agent explicitly here, then query Bedrock directly for the
+# real alias ID — CFN stack outputs can lag behind after an alias replacement.
+log "  Preparing customer Bedrock agent ..."
 
 CUSTOMER_AGENT_ID=$(aws cloudformation describe-stacks \
   --stack-name "$STACK_NAME" --region "$REGION" \
   --query "Stacks[0].Outputs[?OutputKey=='CustomerBedrockAgentId'].OutputValue" --output text)
-CUSTOMER_ALIAS_ID=$(aws cloudformation describe-stacks \
-  --stack-name "$STACK_NAME" --region "$REGION" \
-  --query "Stacks[0].Outputs[?OutputKey=='CustomerBedrockAgentAliasId'].OutputValue" --output text)
+
+aws bedrock-agent prepare-agent \
+  --agent-id "$CUSTOMER_AGENT_ID" --region "$REGION" > /dev/null
+
+for i in $(seq 1 12); do
+  STATUS=$(aws bedrock-agent get-agent --agent-id "$CUSTOMER_AGENT_ID" --region "$REGION" \
+    --query "agent.agentStatus" --output text)
+  [[ "$STATUS" == "PREPARED" ]] && break
+  log "  Agent status: ${STATUS} — waiting ..."
+  sleep 5
+done
+log "  Agent prepared."
+
+log "  Reading current alias from Bedrock ..."
+CUSTOMER_ALIAS_ID=$(aws bedrock-agent list-agent-aliases \
+  --agent-id "$CUSTOMER_AGENT_ID" --region "$REGION" \
+  --query "agentAliasSummaries[?agentAliasName=='live'].agentAliasId" --output text)
+
+if [[ -z "$CUSTOMER_ALIAS_ID" || "$CUSTOMER_ALIAS_ID" == "None" ]]; then
+  log "  Creating 'live' alias ..."
+  CUSTOMER_ALIAS_ID=$(aws bedrock-agent create-agent-alias \
+    --agent-id "$CUSTOMER_AGENT_ID" \
+    --agent-alias-name live \
+    --region "$REGION" \
+    --query "agentAlias.agentAliasId" --output text)
+  log "  Alias created: ${CUSTOMER_ALIAS_ID}"
+else
+  log "  Reusing existing 'live' alias: ${CUSTOMER_ALIAS_ID}"
+fi
+
+log "  Syncing customer Lex Lambda env vars and IAM policy ..."
 
 ALIAS_ARN="arn:aws:bedrock:${REGION}:${ACCOUNT_ID}:agent-alias/${CUSTOMER_AGENT_ID}/${CUSTOMER_ALIAS_ID}"
 LEX_FN="tradie-connect-customer-lex-${ENV}"

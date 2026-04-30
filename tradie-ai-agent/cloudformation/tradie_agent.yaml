@@ -1,8 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Tradie Connect — Tradie-Facing Agent Infrastructure
-  Fully CFN-managed: Lex V2 bot, fulfillment Lambda, Bedrock Agent,
-  Bedrock Agent Alias, and all IAM roles.
+  CFN manages: Lex V2 bot, fulfillment Lambda, Bedrock Agent, and all IAM roles.
+  Bedrock Agent Alias is managed by deploy_tradie_agent.sh (not CFN) to avoid
+  alias replacement churn caused by agent re-preparation.
   System prompt is read from SSM — deploy_tradie_agent.sh puts it there first.
 
 Parameters:
@@ -61,7 +62,9 @@ Resources:
                   - lambda:InvokeFunction
                 Resource: !Ref AgentActionLambdaArn
 
-  # ── 2. Bedrock Agent (fully CFN-managed) ───────────────────────────────────
+  # ── 2. Bedrock Agent ────────────────────────────────────────────────────────
+  # AutoPrepare is false — deploy_tradie_agent.sh calls prepare-agent explicitly
+  # after CFN so alias replacement (caused by auto-preparation) never happens.
   TradieBedrockAgent:
     Type: AWS::Bedrock::Agent
     DependsOn: TradieBedrockAgentExecutionRole
@@ -70,7 +73,7 @@ Resources:
       AgentResourceRoleArn: !GetAtt TradieBedrockAgentExecutionRole.Arn
       FoundationModel: "au.anthropic.claude-haiku-4-5-20251001-v1:0"
       Instruction: !Ref TradieAgentInstruction
-      AutoPrepare: true
+      AutoPrepare: false
       IdleSessionTTLInSeconds: 600
       ActionGroups:
         - ActionGroupName: TradieManagement
@@ -169,14 +172,10 @@ Resources:
                     Required: true
                     Description: "Date to retrieve trips for: today, yesterday, tomorrow, or ISO date YYYY-MM-DD"
 
-  # ── 3. Bedrock Agent Alias (live) ─────────────────────────────────────────
-  TradieBedrockAgentAlias:
-    Type: AWS::Bedrock::AgentAlias
-    Properties:
-      AgentId: !GetAtt TradieBedrockAgent.AgentId
-      AgentAliasName: live
-
-  # ── 4. Lex fulfillment Lambda role ─────────────────────────────────────────
+  # ── 3. Lex fulfillment Lambda role ─────────────────────────────────────────
+  # IAM policy allows bedrock:InvokeAgent on any alias of the tradie agent.
+  # The specific alias ARN is kept current by deploy_tradie_agent.sh via
+  # aws iam put-role-policy after each prepare-agent + alias sync.
   TradieLexFulfillmentLambdaRole:
     Type: AWS::IAM::Role
     Properties:
@@ -199,11 +198,12 @@ Resources:
                 Action:
                   - bedrock:InvokeAgent
                 Resource: !Sub
-                  - "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${AgentId}/${AliasId}"
+                  - "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${AgentId}/*"
                   - AgentId: !GetAtt TradieBedrockAgent.AgentId
-                    AliasId: !GetAtt TradieBedrockAgentAlias.AgentAliasId
 
-  # ── 5. Lex fulfillment Lambda ─────────────────────────────────────────────
+  # ── 4. Lex fulfillment Lambda ─────────────────────────────────────────────
+  # BEDROCK_AGENT_ALIAS_ID is set to a placeholder here; deploy_tradie_agent.sh
+  # overwrites it with the real alias ID after prepare-agent + alias sync.
   TradieLexFulfillmentLambda:
     Type: AWS::Lambda::Function
     Properties:
@@ -219,14 +219,14 @@ Resources:
       Environment:
         Variables:
           BEDROCK_AGENT_ID:       !GetAtt TradieBedrockAgent.AgentId
-          BEDROCK_AGENT_ALIAS_ID: !GetAtt TradieBedrockAgentAlias.AgentAliasId
+          BEDROCK_AGENT_ALIAS_ID: "PENDING"
       Tags:
         - Key: Project
           Value: TradieConnect
         - Key: Env
           Value: !Ref Env
 
-  # ── 6. Allow Lex to invoke the fulfillment Lambda ─────────────────────────
+  # ── 5. Allow Lex to invoke the fulfillment Lambda ─────────────────────────
   TradieLexFulfillmentLambdaLexPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -235,7 +235,7 @@ Resources:
       Principal: lexv2.amazonaws.com
       SourceAccount: !Ref AWS::AccountId
 
-  # ── 7. Allow the tradie Bedrock agent to invoke the shared action Lambda ──
+  # ── 6. Allow the tradie Bedrock agent to invoke the shared action Lambda ──
   TradieAgentActionLambdaBedrockPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -244,7 +244,7 @@ Resources:
       Principal: bedrock.amazonaws.com
       SourceAccount: !Ref AWS::AccountId
 
-  # ── 8. IAM role for the Lex bot (Polly TTS synthesis) ────────────────────
+  # ── 7. IAM role for the Lex bot (Polly TTS synthesis) ────────────────────
   TradieLexBotRole:
     Type: AWS::IAM::Role
     Properties:
@@ -268,7 +268,7 @@ Resources:
                 Action: polly:SynthesizeSpeech
                 Resource: "*"
 
-  # ── 9. Lex V2 bot ─────────────────────────────────────────────────────────
+  # ── 8. Lex V2 bot ─────────────────────────────────────────────────────────
   TradieLexBot:
     Type: AWS::Lex::Bot
     Properties:
@@ -300,7 +300,7 @@ Resources:
               FulfillmentCodeHook:
                 Enabled: true
 
-  # ── 10. Bot version ────────────────────────────────────────────────────────
+  # ── 9. Bot version ────────────────────────────────────────────────────────
   TradieLexBotVersion:
     Type: AWS::Lex::BotVersion
     Properties:
@@ -310,7 +310,7 @@ Resources:
           BotVersionLocaleDetails:
             SourceBotVersion: DRAFT
 
-  # ── 11. Bot alias with Lambda fulfillment hook ────────────────────────────
+  # ── 10. Bot alias with Lambda fulfillment hook ────────────────────────────
   TradieLexBotAlias:
     Type: AWS::Lex::BotAlias
     Properties:
@@ -334,12 +334,6 @@ Outputs:
     Description: Tradie Bedrock Agent ID
     Export:
       Name: !Sub "TradieConnect-TradieAgentId-${Env}"
-
-  TradieBedrockAgentAliasId:
-    Value: !GetAtt TradieBedrockAgentAlias.AgentAliasId
-    Description: Tradie Bedrock Agent Alias ID
-    Export:
-      Name: !Sub "TradieConnect-TradieAliasId-${Env}"
 
   TradieBedrockAgentExecutionRoleArn:
     Value: !GetAtt TradieBedrockAgentExecutionRole.Arn
