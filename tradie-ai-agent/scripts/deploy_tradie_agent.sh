@@ -42,6 +42,8 @@ require() { command -v "$1" &>/dev/null || { echo "ERROR: '$1' not found in PATH
 
 require aws
 
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --region "$REGION")
+
 log "=== Tradie Agent deploy — env=$ENV stack=$TRADIE_STACK ==="
 
 # ── Step 1: Resolve shared Lambda ARN + force code update ─────────────────────
@@ -130,7 +132,37 @@ aws lambda update-function-code \
   --region "$REGION" --output text --query "LastUpdateStatus"
 aws lambda wait function-updated \
   --function-name "tradie-connect-tradie-lex-${ENV}" --region "$REGION"
-log "  Lex Lambda updated."
+log "  Lex Lambda code updated."
+
+# ── Step 3b: Sync Lex Lambda with current alias (guards against CFN alias churn) ─
+# AutoPrepare=true can cause Bedrock to replace the AgentAlias resource, generating
+# a new alias ID. This step reads the authoritative ID from the stack outputs and
+# force-syncs the Lambda env vars and IAM inline policy so they always match.
+log "  Syncing Lex Lambda env vars and IAM policy with current agent alias ..."
+
+TRADIE_AGENT_ID=$(aws cloudformation describe-stacks \
+  --stack-name "$TRADIE_STACK" --region "$REGION" \
+  --query "Stacks[0].Outputs[?OutputKey=='TradieBedrockAgentId'].OutputValue" --output text)
+TRADIE_ALIAS_ID=$(aws cloudformation describe-stacks \
+  --stack-name "$TRADIE_STACK" --region "$REGION" \
+  --query "Stacks[0].Outputs[?OutputKey=='TradieBedrockAgentAliasId'].OutputValue" --output text)
+
+ALIAS_ARN="arn:aws:bedrock:${REGION}:${ACCOUNT_ID}:agent-alias/${TRADIE_AGENT_ID}/${TRADIE_ALIAS_ID}"
+LEX_FN="tradie-connect-tradie-lex-${ENV}"
+LEX_ROLE="tradie-connect-tradie-lex-role-${ENV}"
+
+aws lambda update-function-configuration \
+  --function-name "$LEX_FN" \
+  --environment "Variables={BEDROCK_AGENT_ID=${TRADIE_AGENT_ID},BEDROCK_AGENT_ALIAS_ID=${TRADIE_ALIAS_ID}}" \
+  --region "$REGION" --output text --query "LastUpdateStatus"
+aws lambda wait function-updated --function-name "$LEX_FN" --region "$REGION"
+
+aws iam put-role-policy \
+  --role-name "$LEX_ROLE" \
+  --policy-name "TradieLexFulfillmentPolicy" \
+  --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"bedrock:InvokeAgent\",\"Resource\":\"${ALIAS_ARN}\"}]}"
+
+log "  Alias sync complete — AgentId: ${TRADIE_AGENT_ID}  AliasId: ${TRADIE_ALIAS_ID}"
 
 # ── Step 4: Output ─────────────────────────────────────────────────────────────
 log "Step 4/4 — Done."

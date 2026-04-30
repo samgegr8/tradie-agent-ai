@@ -169,7 +169,37 @@ aws lambda update-function-code \
   --s3-bucket "$CODE_BUCKET" --s3-key "lambda/lex_fulfillment.zip" \
   --region "$REGION" --output text --query "LastUpdateStatus"
 aws lambda wait function-updated --function-name "tradie-connect-customer-lex-${ENV}" --region "$REGION"
-log "  Lambdas updated."
+log "  Lambda code updated."
+
+# ── Step 3b: Sync customer Lex Lambda with current alias (guards against CFN alias churn) ─
+# AutoPrepare=true can cause Bedrock to replace the AgentAlias resource, generating
+# a new alias ID. This step reads the authoritative ID from the stack outputs and
+# force-syncs the Lambda env vars and IAM inline policy so they always match.
+log "  Syncing customer Lex Lambda env vars and IAM policy with current agent alias ..."
+
+CUSTOMER_AGENT_ID=$(aws cloudformation describe-stacks \
+  --stack-name "$STACK_NAME" --region "$REGION" \
+  --query "Stacks[0].Outputs[?OutputKey=='CustomerBedrockAgentId'].OutputValue" --output text)
+CUSTOMER_ALIAS_ID=$(aws cloudformation describe-stacks \
+  --stack-name "$STACK_NAME" --region "$REGION" \
+  --query "Stacks[0].Outputs[?OutputKey=='CustomerBedrockAgentAliasId'].OutputValue" --output text)
+
+ALIAS_ARN="arn:aws:bedrock:${REGION}:${ACCOUNT_ID}:agent-alias/${CUSTOMER_AGENT_ID}/${CUSTOMER_ALIAS_ID}"
+LEX_FN="tradie-connect-customer-lex-${ENV}"
+LEX_ROLE="tradie-connect-customer-lex-role-${ENV}"
+
+aws lambda update-function-configuration \
+  --function-name "$LEX_FN" \
+  --environment "Variables={BEDROCK_AGENT_ID=${CUSTOMER_AGENT_ID},BEDROCK_AGENT_ALIAS_ID=${CUSTOMER_ALIAS_ID}}" \
+  --region "$REGION" --output text --query "LastUpdateStatus"
+aws lambda wait function-updated --function-name "$LEX_FN" --region "$REGION"
+
+aws iam put-role-policy \
+  --role-name "$LEX_ROLE" \
+  --policy-name "LexFulfillmentPolicy" \
+  --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"bedrock:InvokeAgent\",\"Resource\":\"${ALIAS_ARN}\"}]}"
+
+log "  Alias sync complete — AgentId: ${CUSTOMER_AGENT_ID}  AliasId: ${CUSTOMER_ALIAS_ID}"
 
 # ── Step 4: Outputs ────────────────────────────────────────────────────────────
 log "Step 4/4 — Done."
