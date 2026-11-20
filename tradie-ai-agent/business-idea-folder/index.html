@@ -1,0 +1,456 @@
+<title>Tradie Connect Pitch</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..900&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a dispatch board. Left-aligned sections on a blueprint-grey ground; job cards and call logs as the recurring object; one hi-vis tape stripe in the hero. */
+:root{
+  --bg:#F3F5F6;
+  --surface:#FFFFFF;
+  --ink:#13202A;
+  --muted:#55636E;
+  --line:#D5DCE1;
+  --hivis:#F4B400;
+  --hivis-ink:#1B1400;
+  --accent:#0C6E73;
+  --accent-soft:#DCEDEE;
+  --good:#2E7D4F;
+  --warn:#B4590A;
+  --f-display:"Archivo","Arial Narrow",system-ui,sans-serif;
+  --f-body:"Public Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0F171D;--surface:#17222A;--ink:#E7ECEF;--muted:#9AA8B2;--line:#2A3843;
+  --hivis:#F7C02A;--hivis-ink:#1B1400;--accent:#5CC3C8;--accent-soft:#16363A;--good:#6BC78F;--warn:#F0A15A;color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0F171D;--surface:#17222A;--ink:#E7ECEF;--muted:#9AA8B2;--line:#2A3843;
+  --hivis:#F7C02A;--hivis-ink:#1B1400;--accent:#5CC3C8;--accent-soft:#16363A;--good:#6BC78F;--warn:#F0A15A;color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.6}
+.wrap{max-width:1080px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;line-height:1.08}
+h1{font-size:clamp(2.4rem,6vw,4.4rem);font-weight:850;font-stretch:78%;letter-spacing:-.01em}
+h2{font-size:clamp(1.7rem,3.4vw,2.5rem);font-weight:800;font-stretch:82%}
+h3{font-size:1.15rem;font-weight:700;font-stretch:95%}
+p{margin:0;max-width:65ch}
+.eyebrow{font-family:var(--f-mono);font-size:.75rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);font-weight:600}
+.muted{color:var(--muted)}
+section{padding-block:4rem;border-top:1px solid var(--line)}
+.sec-head{display:grid;gap:.75rem;margin-bottom:2rem}
+a{color:var(--accent)}
+:focus-visible{outline:3px solid var(--hivis);outline-offset:2px}
+
+/* hero */
+.hero{padding-block:3.5rem 4rem}
+.hero-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:3rem;align-items:center}
+.hero-grid>*{min-width:0}
+.tape{display:inline;background:linear-gradient(transparent 58%,var(--hivis) 58%,var(--hivis) 92%,transparent 92%);padding:0 .1em}
+.lede{font-size:1.2rem;color:var(--muted);margin-top:1.25rem}
+.hero-facts{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1.75rem}
+.chip{font-family:var(--f-mono);font-size:.78rem;padding:.35rem .65rem;border:1px solid var(--line);border-radius:4px;background:var(--surface);color:var(--ink)}
+
+/* job card */
+.jobcard{background:var(--surface);border:1px solid var(--line);border-radius:6px;box-shadow:0 18px 40px -24px rgba(10,30,40,.45);overflow:hidden;font-size:.92rem}
+.jobcard-top{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.8rem 1rem;background:var(--ink);color:var(--bg)}
+.jobcard-top .id{font-family:var(--f-mono);font-weight:600;letter-spacing:.04em;font-size:.85rem}
+.pill{font-family:var(--f-mono);font-size:.7rem;font-weight:600;letter-spacing:.08em;padding:.2rem .5rem;border-radius:3px;background:var(--hivis);color:var(--hivis-ink)}
+.jobcard dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:.45rem 1rem;padding:1rem}
+.jobcard dt{font-family:var(--f-mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding-top:.15rem}
+.jobcard dd{margin:0}
+.jobcard-foot{border-top:1px dashed var(--line);padding:.75rem 1rem;display:flex;justify-content:space-between;gap:1rem;font-size:.85rem;color:var(--muted)}
+.jobcard-foot strong{color:var(--good)}
+.example{font-family:var(--f-mono);font-size:.7rem;color:var(--muted);margin-top:.6rem;text-align:right}
+
+/* problem */
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:1.25rem}
+.grid3>*{min-width:0}
+.pain{padding:1.25rem 0;border-top:3px solid var(--ink);display:grid;gap:.5rem}
+.pain .big{font-family:var(--f-display);font-weight:800;font-stretch:80%;font-size:1.6rem;line-height:1.1}
+
+/* products */
+.products{display:grid;grid-template-columns:repeat(3,1fr);gap:1.25rem}
+.products>*{min-width:0}
+.prod{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:1.4rem;display:grid;gap:.8rem;align-content:start}
+.prod .who{font-family:var(--f-mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+.prod ul{margin:0;padding-left:1.1rem;display:grid;gap:.35rem}
+.status{font-family:var(--f-mono);font-size:.72rem;color:var(--good)}
+
+/* call log */
+.calls{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem}
+.calls>*{min-width:0}
+.call{background:var(--surface);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.call-head{display:flex;justify-content:space-between;gap:1rem;padding:.75rem 1rem;border-bottom:1px solid var(--line);font-family:var(--f-mono);font-size:.78rem;color:var(--muted)}
+.call ol{list-style:none;margin:0;padding:1rem;display:grid;gap:.6rem}
+.call li{display:grid;grid-template-columns:4.2rem 1fr;gap:.75rem;font-size:.93rem}
+.call .spk{font-family:var(--f-mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;padding-top:.2rem;color:var(--muted)}
+.call .ai .spk{color:var(--accent)}
+.call .tool{grid-template-columns:1fr;font-family:var(--f-mono);font-size:.78rem;color:var(--accent);background:var(--accent-soft);padding:.4rem .6rem;border-radius:4px}
+
+/* diagrams */
+.diagram{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:1.25rem;overflow-x:auto}
+.diagram + .diagram{margin-top:1.25rem}
+.diagram h3{margin-bottom:.75rem}
+pre.mermaid{margin:0;background:transparent;text-align:center}
+
+/* numbers */
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+.tbl{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:6px}
+th,td{text-align:left;padding:.7rem 1rem;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--f-mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+td.num,th.num{text-align:right;white-space:nowrap}
+tr:last-child td{border-bottom:0}
+tfoot td{font-weight:700}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;align-items:start}
+.two>*{min-width:0}
+.note{font-size:.85rem;color:var(--muted);margin-top:.75rem}
+.tiers{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem}
+.tiers>*{min-width:0}
+.tier{border:1px solid var(--line);border-radius:6px;padding:1.2rem;background:var(--surface);display:grid;gap:.5rem;align-content:start}
+.tier .price{font-family:var(--f-display);font-weight:850;font-stretch:80%;font-size:2rem;font-variant-numeric:tabular-nums}
+.tier .price small{font-family:var(--f-body);font-size:.85rem;font-weight:500;color:var(--muted)}
+.tier.feature{border:2px solid var(--ink)}
+.roi{background:var(--ink);color:var(--bg);border-radius:6px;padding:1.5rem;display:grid;gap:.75rem}
+.roi .eyebrow{color:var(--hivis)}
+.roi .big{font-family:var(--f-display);font-weight:850;font-stretch:78%;font-size:2.6rem;line-height:1;font-variant-numeric:tabular-nums}
+.roi p{color:inherit;opacity:.85}
+
+/* objections */
+.qa{display:grid;gap:0;border-top:1px solid var(--line)}
+.qa details{border-bottom:1px solid var(--line);padding:1rem 0}
+.qa summary{cursor:pointer;font-weight:600;font-size:1.05rem;list-style-position:outside}
+.qa details p{margin-top:.6rem;color:var(--muted)}
+
+/* roadmap */
+.road{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;counter-reset:r}
+.road>*{min-width:0}
+.step{border-top:3px solid var(--line);padding-top:.9rem;display:grid;gap:.4rem}
+.step.done{border-color:var(--good)}
+.step.next{border-color:var(--hivis)}
+.step .when{font-family:var(--f-mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+
+.cta{background:var(--hivis);color:var(--hivis-ink);border-radius:6px;padding:2rem;display:grid;gap:1rem}
+.cta h2{color:var(--hivis-ink)}
+.cta ol{margin:0;padding-left:1.2rem;display:grid;gap:.4rem;max-width:65ch}
+footer{padding-block:2rem 3rem;color:var(--muted);font-size:.85rem}
+
+@media (max-width:860px){
+  .hero-grid,.calls,.two{grid-template-columns:1fr}
+  .grid3,.products,.tiers{grid-template-columns:1fr}
+  .road{grid-template-columns:1fr 1fr}
+}
+@media (max-width:480px){.road{grid-template-columns:1fr}.call li{grid-template-columns:3.4rem 1fr}}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="hero-grid">
+    <div>
+      <div class="eyebrow">Tradie Connect · AI phone receptionist for trades</div>
+      <h1 style="margin-top:.9rem">Every job call answered. <span class="tape">Even with your hands in a drain.</span></h1>
+      <p class="lede">An AI voice agent picks up your business line 24/7, books the job, writes the job card and assigns the right tradie. Your crew calls a second line to hear their schedule, close jobs and keep a travel logbook. No app to install.</p>
+      <div class="hero-facts">
+        <span class="chip">Australian English voice</span>
+        <span class="chip">Runs in AWS Sydney</span>
+        <span class="chip">Claude Haiku 4.5 on Bedrock</span>
+        <span class="chip">~3 min per booking call</span>
+      </div>
+    </div>
+    <div>
+      <article class="jobcard" aria-label="Example job card created by the agent">
+        <div class="jobcard-top"><span class="id">JOB-20261120-A3F2B1</span><span class="pill">ASSIGNED</span></div>
+        <dl>
+          <dt>Customer</dt><dd>Sarah M. · 04•• ••• 678</dd>
+          <dt>Trade</dt><dd>Plumber</dd>
+          <dt>Problem</dt><dd>Leaking tap under kitchen sink</dd>
+          <dt>Address</dt><dd>32 King St, Newtown NSW 2042</dd>
+          <dt>When</dt><dd>Sat 21 Nov · 9am</dd>
+          <dt>Urgency</dt><dd>Standard</dd>
+        </dl>
+        <div class="jobcard-foot"><span>Tradie: <strong>Dave R.</strong></span><span>Booked 9:47pm by AI agent</span></div>
+      </article>
+      <div class="example">Example record · the exact fields the system stores</div>
+    </div>
+  </div>
+</header>
+
+<section id="problem">
+  <div class="sec-head">
+    <div class="eyebrow">The problem</div>
+    <h2>Small trade businesses lose work at the phone</h2>
+  </div>
+  <div class="grid3">
+    <div class="pain">
+      <div class="big">On the tools, off the phone</div>
+      <p class="muted">A plumber under a house or an electrician up a ladder can't pick up. The caller rings the next business on Google.</p>
+    </div>
+    <div class="pain">
+      <div class="big">After-hours calls go to voicemail</div>
+      <p class="muted">Emergencies happen at night and on weekends. A receptionist or answering service is costly for a 1 to 10 person crew.</p>
+    </div>
+    <div class="pain">
+      <div class="big">Admin eats the evening</div>
+      <p class="muted">Writing up job details, working out who goes where, and keeping a vehicle logbook for tax time all happen after a full day's work.</p>
+    </div>
+  </div>
+</section>
+
+<section id="product">
+  <div class="sec-head">
+    <div class="eyebrow">What we sell</div>
+    <h2>Three pieces, one system</h2>
+    <p class="muted">All three are built and deployable today on the customer's own AWS account.</p>
+  </div>
+  <div class="products">
+    <div class="prod">
+      <div class="who">For your customers</div>
+      <h3>The booking line</h3>
+      <p>The AI answers, then collects:</p>
+      <ul>
+        <li>Name and callback number</li>
+        <li>Trade needed and the problem</li>
+        <li>Full address with suburb and postcode</li>
+        <li>Preferred day and time</li>
+        <li>Emergency or standard</li>
+      </ul>
+      <p>It creates the job card, finds a tradie who covers that trade and suburb, assigns them, and reads the job reference back to the caller.</p>
+      <div class="status">● Live</div>
+    </div>
+    <div class="prod">
+      <div class="who">For your tradies</div>
+      <h3>The crew line</h3>
+      <p>Tradies call in and say their 6-digit code. Then they can ask:</p>
+      <ul>
+        <li>"What jobs have I got tomorrow?"</li>
+        <li>"Mark the Newtown job done."</li>
+        <li>"I'm heading to Bunnings Auburn."</li>
+        <li>"I've arrived." (ends the trip)</li>
+        <li>"Read me today's trip log."</li>
+      </ul>
+      <p>Hands-free from the ute. Jobs can only be closed by the tradie they belong to.</p>
+      <div class="status">● Live</div>
+    </div>
+    <div class="prod">
+      <div class="who">For the office and the crew</div>
+      <h3>The tradie portal</h3>
+      <p>A simple web page. Log in with the same 6-digit code to see:</p>
+      <ul>
+        <li>My Jobs: date, time, customer, address, description</li>
+        <li>Trip Log: every trip with type, destination, start and end time, filterable by day</li>
+      </ul>
+      <p>Phone numbers never reach the browser. The code is the only login.</p>
+      <div class="status">● Live</div>
+    </div>
+  </div>
+</section>
+
+<section id="calls">
+  <div class="sec-head">
+    <div class="eyebrow">What it sounds like</div>
+    <h2>Two real call flows</h2>
+    <p class="muted">Scripts follow the agents' actual instructions. Shaded lines are the system actions that happen silently during the call.</p>
+  </div>
+  <div class="calls">
+    <div class="call">
+      <div class="call-head"><span>Booking line · customer</span><span>~3 min</span></div>
+      <ol>
+        <li><span class="spk">Agent</span><span>Welcome to Tradie Connect. How can I help?</span></li>
+        <li><span class="spk">Caller</span><span>My kitchen tap's leaking under the sink.</span></li>
+        <li><span class="spk">Agent</span><span>No worries. Can I grab your name and the best number to call you back on?</span></li>
+        <li><span class="spk">Caller</span><span>Sarah. 0412 345 678.</span></li>
+        <li><span class="spk">Agent</span><span>Thanks Sarah, that's 0 4 1 2 3 4 5 6 7 8. And the address?</span></li>
+        <li><span class="spk">Caller</span><span>32 King Street, Newtown, 2042.</span></li>
+        <li><span class="spk">Agent</span><span>What day suits, and is it an emergency or can it wait?</span></li>
+        <li><span class="spk">Caller</span><span>Tomorrow at 9. It can wait.</span></li>
+        <li class="tool">createJobCard → lookupAvailableTradie (plumber, Newtown) → assignTradieToJob</li>
+        <li><span class="spk">Agent</span><span>All booked. Your reference is J O B 2 0 2 6 1 1 2 0 A 3 F 2 B 1. Dave will be in touch to confirm. Have a good night.</span></li>
+      </ol>
+    </div>
+    <div class="call">
+      <div class="call-head"><span>Crew line · tradie</span><span>~1 min</span></div>
+      <ol>
+        <li><span class="spk">Agent</span><span>Welcome to Tradie Connect. Please tell me your 6-digit tradie code.</span></li>
+        <li><span class="spk">Tradie</span><span>4 8 2 7 1 9.</span></li>
+        <li><span class="spk">Agent</span><span>I heard 4 8 2 7 1 9. Is that right?</span></li>
+        <li class="tool">lookupTradieByCode → Dave R.</li>
+        <li><span class="spk">Agent</span><span>No worries Dave, how can I help you today?</span></li>
+        <li><span class="spk">Tradie</span><span>I'm heading to my job.</span></li>
+        <li class="tool">getJobsByTradie (today) → 1 job</li>
+        <li><span class="spk">Agent</span><span>Is this for your job at 32 King Street Newtown?</span></li>
+        <li><span class="spk">Tradie</span><span>Yeah, that's it.</span></li>
+        <li class="tool">startTrip (job → 32 King St Newtown)</li>
+        <li><span class="spk">Agent</span><span>Done, I have started your trip log to 32 King Street Newtown. Anything else?</span></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="sec-head">
+    <div class="eyebrow">How it works</div>
+    <h2>Under the hood</h2>
+    <p class="muted">Standard AWS building blocks, deployed by script into the customer's own account in the Sydney region. Their customer data never leaves Australia.</p>
+  </div>
+  <div class="diagram">
+    <h3>System overview</h3>
+<pre class="mermaid">
+flowchart LR
+  C([Customer calls<br/>booking line]) --> AC[Amazon Connect<br/>phone number]
+  T([Tradie calls<br/>crew line]) --> AC
+  AC --> LX[Amazon Lex<br/>speech to text]
+  LX --> CA[Customer AI agent<br/>Claude on Bedrock]
+  LX --> TA[Tradie AI agent<br/>Claude on Bedrock]
+  CA --> L[Actions service<br/>AWS Lambda]
+  TA --> L
+  L --> J[(Jobs)]
+  L --> R[(Tradie roster)]
+  L --> TR[(Trip log)]
+  P([Tradie or office<br/>opens portal]) --> W[Portal website]
+  W --> API[Portal API] --> J
+  API --> TR
+  API --> R
+</pre>
+  </div>
+  <div class="diagram">
+    <h3>A booking, step by step</h3>
+<pre class="mermaid">
+sequenceDiagram
+  participant Cu as Customer
+  participant Ag as AI agent
+  participant Sy as Tradie Connect
+  participant Td as Tradie
+  Cu->>Ag: Calls the business number
+  Ag->>Cu: Asks for name, number, trade, problem, address, time, urgency
+  Cu->>Ag: Answers one question at a time
+  Ag->>Sy: 1. Create job card
+  Sy-->>Ag: Job reference
+  Ag->>Sy: 2. Find tradie by trade and suburb
+  Sy-->>Ag: Dave R. (plumber, Newtown)
+  Ag->>Sy: 3. Assign Dave to the job
+  Ag->>Cu: Reads back reference and tradie name
+  Td->>Sy: Next morning: "What jobs have I got today?"
+  Sy-->>Td: 32 King St Newtown, 9am
+</pre>
+  </div>
+</section>
+
+<section id="numbers">
+  <div class="sec-head">
+    <div class="eyebrow">The numbers</div>
+    <h2>Cheap to run, easy to price</h2>
+  </div>
+  <div class="two">
+    <div>
+      <h3 style="margin-bottom:.75rem">Running cost at 50 calls a day</h3>
+      <div class="tbl">
+        <table>
+          <thead><tr><th>Service</th><th class="num">AUD / month</th></tr></thead>
+          <tbody>
+            <tr><td>Connect voice channel</td><td class="num">$129</td></tr>
+            <tr><td>AU phone number</td><td class="num">$57</td></tr>
+            <tr><td>AU inbound telephony</td><td class="num">$94</td></tr>
+            <tr><td>Speech transcription</td><td class="num">$171</td></tr>
+            <tr><td>AI model (Claude Haiku 4.5)</td><td class="num">$9</td></tr>
+            <tr><td>Database, compute, hosting</td><td class="num">$6</td></tr>
+          </tbody>
+          <tfoot><tr><td>Total</td><td class="num">~$466</td></tr></tfoot>
+        </table>
+      </div>
+      <p class="note">Estimate from the project's AWS cost model: 50 calls a day at ~3 minutes each, about 4,500 minutes a month. That works out near 10 cents per call minute all-in. The AI itself is under 2% of the bill.</p>
+    </div>
+    <div style="display:grid;gap:1.25rem">
+      <div class="roi">
+        <div class="eyebrow">Illustrative payback</div>
+        <div class="big">~$1,500 / month</div>
+        <p>Recovered work if the AI catches 3 calls a week that would have gone to voicemail, 1 in 3 of those turns into a job, and the average job is worth $350.</p>
+        <p style="font-size:.85rem">Assumptions for the pitch. Replace them with the prospect's own figures in the meeting.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3 style="margin:2.5rem 0 .75rem">Suggested pricing</h3>
+  <div class="tiers">
+    <div class="tier">
+      <div class="who eyebrow">Solo</div>
+      <div class="price">$249<small> /month</small></div>
+      <p class="muted">1 to 2 tradies · up to 300 booking calls</p>
+      <p>Booking line, crew line, portal.</p>
+    </div>
+    <div class="tier feature">
+      <div class="who eyebrow">Crew</div>
+      <div class="price">$599<small> /month</small></div>
+      <p class="muted">Up to 10 tradies · up to 1,500 calls</p>
+      <p>Everything in Solo, plus multi-trade routing by suburb and onboarding of the tradie roster.</p>
+    </div>
+    <div class="tier">
+      <div class="who eyebrow">Multi-site</div>
+      <div class="price">Quote</div>
+      <p class="muted">Franchises, builders, facilities firms</p>
+      <p>Dedicated deployment in their AWS account, custom flows, integrations.</p>
+    </div>
+  </div>
+  <p class="note">Draft tiers for discussion, not validated pricing. At full allowance, Solo costs about $140 a month to run on AWS and Crew about $466, so both keep a margin.</p>
+</section>
+
+<section id="why">
+  <div class="sec-head">
+    <div class="eyebrow">Why us</div>
+    <h2>What sets it apart</h2>
+  </div>
+  <div class="grid3">
+    <div class="pain"><h3>Built for Aussie trades</h3><p class="muted">Australian voice and phrasing. It reads postcodes and phone numbers back digit by digit, and it understands "Bunnings Auburn" as a supplier trip.</p></div>
+    <div class="pain"><h3>Books jobs, doesn't just take messages</h3><p class="muted">A message-taking service leaves you a voicemail. This one ends the call with a booked job, an assigned tradie and a reference number.</p></div>
+    <div class="pain"><h3>Your data, your account</h3><p class="muted">Deploys into the business's own AWS account in Sydney. Customer records stay in Australia and stay theirs.</p></div>
+    <div class="pain"><h3>No app for the crew</h3><p class="muted">Tradies use a phone call or a web page. Nothing to install, nothing to learn.</p></div>
+    <div class="pain"><h3>Logbook built in</h3><p class="muted">Every job, supplier and home trip is time-stamped by voice. That's a head start on a vehicle logbook for tax time.</p></div>
+    <div class="pain"><h3>Up in a day</h3><p class="muted">Three deploy scripts and a one-time phone setup. Re-running a deploy is safe.</p></div>
+  </div>
+</section>
+
+<section id="objections">
+  <div class="sec-head">
+    <div class="eyebrow">Be ready for</div>
+    <h2>Questions prospects will ask</h2>
+  </div>
+  <div class="qa">
+    <details open><summary>Will my customers know it's a robot?</summary><p>Probably, and most won't mind if the job gets booked on the first call. The agent is friendly, keeps answers short and asks one question at a time.</p></details>
+    <details><summary>Does it quote prices?</summary><p>No, by design. It tells the caller the tradie will provide a quote. That keeps pricing in the tradie's hands.</p></details>
+    <details><summary>What if no tradie covers that suburb?</summary><p>The job is still logged with a reference number, and the caller is told someone will call back within 2 hours. Nothing is lost.</p></details>
+    <details><summary>Can it put the caller through to me?</summary><p>Not today. It is fully automated. A transfer-to-human option is a sensible add-on for the Crew tier.</p></details>
+    <details><summary>Does my tradie get a text when a job is booked?</summary><p>Not yet. The system already records each notification as pending, and SMS via Twilio is the next roadmap item. Until then tradies check the crew line or the portal.</p></details>
+    <details><summary>Is the logbook ATO-compliant?</summary><p>It records trip purpose, destination and times. Odometer readings, which a full ATO logbook needs, are on the roadmap. Position it as a logbook helper for now.</p></details>
+  </div>
+</section>
+
+<section id="roadmap">
+  <div class="sec-head">
+    <div class="eyebrow">Roadmap</div>
+    <h2>Where it goes next</h2>
+  </div>
+  <div class="road">
+    <div class="step done"><div class="when">Built</div><h3>Booking + crew lines + portal</h3><p class="muted">Two voice agents, job cards, tradie matching, trip log, web portal.</p></div>
+    <div class="step next"><div class="when">Next</div><h3>SMS alerts</h3><p class="muted">Text the tradie when a job is assigned, and the customer when it's confirmed.</p></div>
+    <div class="step"><div class="when">Then</div><h3>One-time-code login</h3><p class="muted">Replace the fixed 6-digit portal code with an SMS code.</p></div>
+    <div class="step"><div class="when">Later</div><h3>Odometer logbook</h3><p class="muted">Capture start and end km for a full tax-ready vehicle logbook.</p></div>
+  </div>
+</section>
+
+<section id="next">
+  <div class="cta">
+    <div class="eyebrow" style="color:var(--hivis-ink)">The ask</div>
+    <h2>A 30-day pilot on one phone number</h2>
+    <ol>
+      <li>Send us your tradie list: name, trade and the suburbs each one covers.</li>
+      <li>We deploy into your AWS account, or ours, and give you a booking number and a crew number.</li>
+      <li>Forward your after-hours calls to it for 30 days.</li>
+      <li>We review every booked job together and compare it with your missed-call count from last month.</li>
+    </ol>
+  </div>
+</section>
+
+<footer>Tradie Connect · pitch pack. Figures marked as illustrative or suggested are assumptions for discussion.</footer>
+</div>
